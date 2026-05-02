@@ -35,3 +35,4 @@ Description: Unified COSMIC Desktop Environment (Epoch Monorepo)
  This package provides the full stack of the System76 COSMIC Desktop 
  Environment, including the compositor, panel, settings, and core 
  libraries, built from the cosmic-epoch monorepo.
+
