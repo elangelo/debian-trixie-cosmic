@@ -47,6 +47,30 @@ just package-debs
 ```
 
 ### Installation
+
+#### Option 1: Official APT Repository (Recommended)
+Add our signed repository to your Debian Testing/Sid system for automatic updates:
+
+```bash
+# 1. Add the repository public key
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://rickysarraf.github.io/debian-cosmic/debian-cosmic.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/debian-cosmic.gpg
+
+# 2. Add the repository to your sources
+echo "deb [signed-by=/etc/apt/keyrings/debian-cosmic.gpg] https://rickysarraf.github.io/debian-cosmic/ unstable main" | sudo tee /etc/apt/sources.list.d/debian-cosmic.list
+
+# 3. Update and install
+sudo apt update
+sudo apt install cosmic-epoch-monorepo cosmic-utils-monorepo
+```
+
+#### Option 2: Direct .deb Download
+Download the `.deb` files directly from our [Releases](https://github.com/rickysarraf/debian-cosmic/releases) page and install them manually:
+```bash
+sudo apt install ./cosmic-epoch-monorepo*.deb ./cosmic-utils-monorepo*.deb
+```
+
+#### Option 3: System Extension (`sysext`)
 For detailed instructions on using the `sysext` approach with `cosmic-toggle` and `cosmic-update`, see the `bin/` directory documentation.
 
 ---

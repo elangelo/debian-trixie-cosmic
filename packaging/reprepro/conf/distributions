@@ -1,0 +1,7 @@
+Origin: Debian COSMIC
+Label: Debian COSMIC
+Codename: unstable
+Architectures: amd64
+Components: main
+Description: APT repository for Debian COSMIC Monorepo packages
+SignWith: yes

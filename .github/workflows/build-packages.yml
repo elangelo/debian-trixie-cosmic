@@ -80,16 +80,22 @@ jobs:
     needs: build-and-push
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     permissions:
       contents: write
+      pages: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/
           merge-multiple: true
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: rolling-${{ github.sha }}
@@ -106,3 +112,32 @@ jobs:
           files: dist/*.deb
           draft: false
           prerelease: false
+
+      - name: Setup GPG for APT Signing
+        if: env.GPG_PRIVATE_KEY != ''
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import --batch
+          # Export public key for users
+          gpg --armor --export > dist/debian-cosmic.gpg
+
+      - name: Build APT Repository with reprepro
+        run: |
+          sudo apt-get update && sudo apt-get install -y reprepro
+          mkdir -p repo/conf
+          cp packaging/reprepro/conf/distributions repo/conf/
+          
+          # Add packages to reprepro
+          for deb in dist/*.deb; do
+            reprepro -b repo includedeb unstable "$deb"
+          done
+          
+          # Move public key into the web root
+          if [ -f dist/debian-cosmic.gpg ]; then
+            cp dist/debian-cosmic.gpg repo/
+          fi
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: repo
+          branch: gh-pages
