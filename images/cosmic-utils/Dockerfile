@@ -77,6 +77,7 @@ RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/li
 WORKDIR /pkg
 COPY --from=builder /export/usr ./usr
 COPY packaging/debian ./DEBIAN
+RUN chmod -R 755 ./DEBIAN
 # Ensure version consistency
 RUN dpkg-deb --build . /cosmic-utils-monorepo.deb
 

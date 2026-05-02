@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     libdbus-1-dev libpam0g-dev libfontconfig-dev libfreetype-dev \
     libpolkit-gobject-1-dev libgudev-1.0-dev libglib2.0-dev \
     libjson-glib-dev libpulse-dev libasound2-dev libssl-dev \
-    libflatpak-dev libostree-dev libarchive-dev libgstreamer1.0-dev \
+    libflatpak-dev libarchive-dev libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev clang llvm-dev cmake \
     libpixman-1-dev libwayland-bin libdisplay-info-dev libxcb-xinput-dev \
     wayland-protocols extra-cmake-modules scdoc sed make libclang-dev \
@@ -52,6 +52,7 @@ RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/li
 WORKDIR /pkg
 COPY --from=builder /export/usr ./usr
 COPY packaging/debian ./DEBIAN
+RUN chmod -R 755 ./DEBIAN
 # Ensure version consistency
 RUN dpkg-deb --build . /cosmic-epoch-monorepo.deb
 

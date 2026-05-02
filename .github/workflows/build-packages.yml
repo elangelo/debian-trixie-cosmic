@@ -50,12 +50,12 @@ jobs:
         run: |
           BUILD_VERSION="${{ env.BASE_VERSION }}.build${{ github.run_number }}"
           echo "Injecting version: $BUILD_VERSION"
-          sed -i "s/1.0.11-1/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/control
+          # Update the main version in changelog
           sed -i "s/1.0.11-1/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/changelog
-          if [ "${{ matrix.name }}" == "cosmic-utils" ]; then
-             # Ensure the dependency on Epoch also uses the dynamic version
-             sed -i "s/cosmic-epoch-monorepo (= $BUILD_VERSION)/cosmic-epoch-monorepo (= $BUILD_VERSION)/g" ${{ matrix.context }}/packaging/debian/control
-          fi
+          # Update placeholders in control file
+          sed -i "s/@VERSION@/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/control
+          # Also set the version field in control
+          echo "Version: $BUILD_VERSION" >> ${{ matrix.context }}/packaging/debian/control
 
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v5
