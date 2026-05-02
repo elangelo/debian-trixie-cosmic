@@ -1,13 +1,10 @@
-Source: cosmic-epoch-monorepo
+Package: cosmic-epoch-monorepo
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Ritesh Raj Sarraf <rrs@debian.org>
 Section: x11
 Priority: optional
-Maintainer: Ritesh Raj Sarraf <rrs@debian.org>
-Build-Depends: debhelper-compat (= 13)
-Standards-Version: 4.6.2
 Homepage: https://github.com/pop-os/cosmic-epoch
-
-Package: cosmic-epoch-monorepo
-Architecture: amd64
 Depends: libpipewire-0.3-0,
          libwayland-client0,
          libxkbcommon0,
