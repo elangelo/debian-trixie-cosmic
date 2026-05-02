@@ -55,6 +55,7 @@ jobs:
 
       - name: Extract .deb artifact
         run: |
+          mkdir -p dist
           docker run --rm -v $(pwd)/dist:/dist ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest cp /*.deb /dist/
         
       - name: Upload .deb artifacts
@@ -62,3 +63,34 @@ jobs:
         with:
           name: ${{ matrix.name }}-deb
           path: dist/*.deb
+
+  release:
+    needs: build-and-push
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rolling-${{ github.sha }}
+          name: COSMIC Rolling Release (${{ github.run_id }})
+          body: |
+            ## 🌌 COSMIC Rolling Release
+            Automatically generated build for Debian Testing/Sid.
+            
+            ### 🏗️ Artifacts
+            - **Images:** `ghcr.io/${{ github.repository_owner }}/debian-cosmic-epoch:latest`
+            - **Images:** `ghcr.io/${{ github.repository_owner }}/debian-cosmic-utils:latest`
+            
+            Download the `.deb` files below for traditional installation.
+          files: dist/*.deb
+          draft: false
+          prerelease: false
