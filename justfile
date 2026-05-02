@@ -1,0 +1,15 @@
+# Build all COSMIC monorepo .deb packages
+package-debs:
+    @echo "🏗️ Building Cosmic Epoch monodeb..."
+    docker build -t cosmic-epoch-deb images/cosmic-epoch
+    @echo "🏗️ Building Cosmic Utils monodeb..."
+    docker build -t cosmic-utils-deb images/cosmic-utils
+    mkdir -p dist
+    @echo "📦 Extracting packages to ./dist/..."
+    docker run --rm -v $(pwd)/dist:/dist cosmic-epoch-deb cp /cosmic-epoch-monorepo.deb /dist/
+    docker run --rm -v $(pwd)/dist:/dist cosmic-utils-deb cp /cosmic-utils-monorepo.deb /dist/
+    @echo "✅ Build complete. Packages located in ./dist/"
+
+# Clean build artifacts
+clean:
+    rm -rf dist

@@ -1,0 +1,52 @@
+#!/bin/bash
+# COSMIC Modular Update Script (Pristine Host Mode)
+# Usage: cosmic-update [utils] [tag]
+
+if [[ "$1" == "utils" ]]; then
+    echo "🔧 Mode: Full Stack Update (Core + Utilities)"
+    BUCKETS=("debian-testing-cosmic-sysext" "debian-testing-cosmic-utils-sysext")
+    TAG=${2:-latest}
+else
+    echo "🌟 Mode: Pristine Core Update"
+    BUCKETS=("debian-testing-cosmic-sysext")
+    TAG=${1:-latest}
+fi
+
+USER="rickysarraf"
+EXT_ROOT="/var/lib/extensions"
+
+echo "🚀 Starting Update (Tag: $TAG)..."
+
+# 1. UNMERGE: Ensure /usr is writable and host is in original state
+sudo systemd-sysext unmerge
+
+for BUCKET in "${BUCKETS[@]}"; do
+    IMAGE="ghcr.io/$USER/$BUCKET:$TAG"
+    SHORT_NAME=$(echo "$BUCKET" | sed 's/debian-testing-//; s/-sysext//')
+    EXT_DIR="$EXT_ROOT/$SHORT_NAME"
+
+    echo "📦 Updating Bucket: $SHORT_NAME from $IMAGE..."
+    
+    sudo mkdir -p "$EXT_DIR"
+    docker pull "$IMAGE" || { echo "⚠️ Failed to pull $IMAGE, skipping..."; continue; }
+
+    CONTAINER_ID=$(docker create "$IMAGE")
+    if [ -z "$CONTAINER_ID" ]; then
+        echo "❌ Error: Failed to create container for $SHORT_NAME"
+        continue
+    fi
+
+    # 2. UPDATE: Clean and extract
+    sudo rm -rf "${EXT_DIR:?}/usr"
+    sudo docker cp "$CONTAINER_ID:/usr" "$EXT_DIR/"
+    docker rm "$CONTAINER_ID" > /dev/null
+
+    echo "🧹 Sanitizing $SHORT_NAME..."
+    sudo rm -f "${EXT_DIR}/usr/bin/env" "${EXT_DIR}/usr/bin/sh" "${EXT_DIR}/usr/bin/bash" "${EXT_DIR}/usr/bin/ldconfig"
+    sudo rm -rf "${EXT_DIR}/etc" "${EXT_DIR}/usr/sbin" "${EXT_DIR}/usr/lib/ld-linux*"
+done
+
+# 3. FINAL STATE: We DO NOT merge here. 
+# The host remains pristine. Use 'cosmic-toggle on' to use the desktop.
+echo "✅ Update complete. /usr is in its original state."
+echo "   Use 'cosmic-toggle on' to activate the COSMIC extension."

@@ -1,0 +1,6 @@
+cosmic-utils-monorepo (1.0.11-1) unstable; urgency=low
+
+  * Initial monorepo build of COSMIC Utilities.
+  * Synchronized with COSMIC Epoch 1.0.11.
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 02 May 2026 12:00:00 +0530
