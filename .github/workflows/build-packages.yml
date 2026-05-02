@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '0 18 * * 5' # Weekly build on Friday
+    - cron: '59 23 * * 5' # Weekly build on Friday at 23:59 UTC
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}
+  BASE_VERSION: "1.0.11-1"
 
 jobs:
   build-and-push:
@@ -44,6 +45,17 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Inject dynamic version into packaging
+        run: |
+          BUILD_VERSION="${{ env.BASE_VERSION }}.build${{ github.run_number }}"
+          echo "Injecting version: $BUILD_VERSION"
+          sed -i "s/1.0.11-1/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/control
+          sed -i "s/1.0.11-1/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/changelog
+          if [ "${{ matrix.name }}" == "cosmic-utils" ]; then
+             # Ensure the dependency on Epoch also uses the dynamic version
+             sed -i "s/cosmic-epoch-monorepo (= $BUILD_VERSION)/cosmic-epoch-monorepo (= $BUILD_VERSION)/g" ${{ matrix.context }}/packaging/debian/control
+          fi
 
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v5

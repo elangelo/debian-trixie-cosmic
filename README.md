@@ -1,5 +1,9 @@
 # 🌌 Debian COSMIC
 
+![Debian Logo](https://www.debian.org/logos/openlogo-nd-100.png) ![COSMIC Logo](https://raw.githubusercontent.com/pop-os/cosmic/master/cosmic-panel/res/cosmic-symbolic.svg)
+
+[![Debian COSMIC - Build Packages](https://github.com/rickysarraf/debian-cosmic/actions/workflows/build-packages.yml/badge.svg)](https://github.com/rickysarraf/debian-cosmic/actions/workflows/build-packages.yml)
+
 Welcome to the standalone **Debian COSMIC** project. This repository provides a unified delivery pipeline for the [System76 COSMIC Desktop Environment](https://github.com/pop-os/cosmic) on Debian Testing (Trixie) and Unstable (Sid).
 
 By carving this out of the Desktop Brewery, we ensure dedicated attention to the unique packaging and delivery needs of COSMIC on Debian.
@@ -15,9 +19,16 @@ Unified Debian packages for traditional installation.
 - **`cosmic-epoch-monorepo`**: The full Core DE stack (Compositor, Panel, Settings, etc.).
 - **`cosmic-utils-monorepo`**: The community utilities stack (Tweaks, Vigil, Chronos, etc.).
 
+Packages are automatically versioned (e.g., `1.0.11-1.build42`) and promoted to [GitHub Releases](https://github.com/rickysarraf/debian-cosmic/releases).
+
 ### 2. System Extensions (`sysext`)
 Optimized OCI images for `systemd-sysext`, allowing you to run COSMIC without polluting your host's `/usr`.
 - Delivered via the GitHub Container Registry (GHCR).
+
+---
+
+## 📅 Build Schedule
+Fresh builds are "baked" every **Friday at 23:59 UTC**, ensuring a crisp Saturday morning experience for our users.
 
 ---
 
