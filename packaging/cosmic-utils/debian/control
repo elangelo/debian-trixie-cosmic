@@ -9,8 +9,8 @@ Homepage: https://github.com/cosmic-utils
 Package: cosmic-utils-monorepo
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends},
-         cosmic-epoch-monorepo (= 1.0.11-1)
-Built-Using: cosmic-epoch (= 1.0.11-1)
+Recommends: cosmic-epoch-monorepo (= @VERSION@)
+Built-Using: cosmic-epoch-monorepo (= @VERSION@)
 Description: Unified COSMIC Community Utilities
  This package provides a collection of community-developed utilities 
  and applets for the COSMIC Desktop Environment, including Tweaks, 
