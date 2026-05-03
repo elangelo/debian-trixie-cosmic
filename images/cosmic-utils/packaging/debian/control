@@ -1,7 +1,7 @@
 Package: cosmic-utils-monorepo
 Version: @VERSION@
 Architecture: amd64
-Maintainer: Ritesh Raj Sarraf <rrs@debian.org>
+Maintainer: Ritesh Raj Sarraf <rrs@researchut.com>
 Section: x11
 Priority: optional
 Homepage: https://github.com/rickysarraf/debian-cosmic
@@ -14,4 +14,3 @@ Description: Unified COSMIC Community Utilities
  .
  This package is strictly tied to the version of cosmic-epoch-monorepo 
  it was built against.
-
