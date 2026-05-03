@@ -92,6 +92,7 @@ jobs:
     permissions:
       contents: write
       pages: write
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -143,8 +144,21 @@ jobs:
             cp dist/debian-cosmic.gpg repo/
           fi
 
-      - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          folder: repo
-          branch: gh-pages
+          path: repo/
+
+  deploy-pages:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
