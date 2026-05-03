@@ -71,7 +71,7 @@ jobs:
       - name: Extract .deb artifact
         run: |
           mkdir -p dist
-          docker run --rm -v $(pwd)/dist:/dist ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest cp /*.deb /dist/
+          docker run --rm -v $(pwd)/dist:/dist ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest sh -c "cp /*.deb /dist/"
 
       - name: Test Package Installation
         run: |
