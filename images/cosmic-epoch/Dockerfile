@@ -51,6 +51,8 @@ FROM debian:testing AS deb-packager
 RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/lists/*
 WORKDIR /pkg
 COPY --from=builder /export/usr ./usr
+# Final safety check: Remove any essential system binaries that might have leaked in
+RUN rm -f ./usr/bin/env ./usr/bin/bash ./usr/bin/sh ./usr/bin/dash ./usr/bin/python*
 COPY packaging/debian ./DEBIAN
 RUN chmod -R 755 ./DEBIAN
 # Ensure version consistency
