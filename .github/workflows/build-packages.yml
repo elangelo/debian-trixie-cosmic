@@ -2,7 +2,7 @@ name: Debian COSMIC - Build Packages
 
 on:
   push:
-    branches: [ "main", "wip/ritesh/*" ]
+    branches: [ "main", "wip/*" ]
   pull_request:
     branches: [ "main" ]
   schedule:
