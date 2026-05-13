@@ -16,7 +16,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}
-  BASE_VERSION: "1.0.12-1"
+  BASE_VERSION: "1.0.13-1"
 
 jobs:
   build-and-push:
@@ -36,7 +36,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-      actions: write
+      actions: write  # Required for GHA cache (cache-to: type=gha)
 
     steps:
       - name: Checkout repository
@@ -61,19 +61,26 @@ jobs:
           # Update placeholders in control file
           sed -i "s/@VERSION@/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/control
 
-      - name: Build and push ${{ matrix.name }}
+      - name: Build ${{ matrix.name }}
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
-          push: ${{ github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/heads/wip/') }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
+          push: false
+          load: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
+            ${{ matrix.image }}:local
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Push ${{ matrix.name }} to registry
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/heads/wip/')
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
 
       - name: Extract .deb artifact
         run: |
           mkdir -p dist
-          docker run --rm -v $(pwd)/dist:/dist ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest sh -c "cp /*.deb /dist/"
+          docker run --rm -v $(pwd)/dist:/dist ${{ matrix.image }}:local sh -c "cp /*.deb /dist/"
 
       - name: Test Package Installation
         run: |
