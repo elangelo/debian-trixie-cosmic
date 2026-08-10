@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 # Stage 1: Builder
-FROM debian:testing AS builder
+FROM debian:trixie AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Add stable build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential git just cargo rustc pkg-config \
+    build-essential git just curl pkg-config \
     libpipewire-0.3-dev libspa-0.2-dev libwayland-dev libxkbcommon-dev \
     libinput-dev libseat-dev libudev-dev libgbm-dev libdrm-dev \
     libdbus-1-dev libpam0g-dev libfontconfig-dev libfreetype-dev \
@@ -21,13 +21,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
-# 2. Rust/Cargo build configuration
-ENV CARGO_HOME=/usr/local/cargo
+# 2. Install Rust via rustup (system rustc in Trixie is too old)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path
+ENV CARGO_HOME=/root/.cargo
 ENV PATH=$CARGO_HOME/bin:$PATH
 ENV CARGO_PROFILE_RELEASE_LTO=thin
 ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 ENV CARGO_PROFILE_RELEASE_PANIC=abort
-ENV LIBCLANG_PATH=/usr/lib/llvm-21/lib
+ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
 
 # Mark the directory as safe for git
 RUN git config --global --add safe.directory /build && \
@@ -40,24 +41,32 @@ RUN git config --global --add safe.directory /build && \
         -e 's|{{ make }} -C xdg-desktop-portal-cosmic install DESTDIR={{rootdir}} prefix={{prefix}}|{{ just }} rootdir={{rootdir}} prefix={{prefix}} xdg-desktop-portal-cosmic/install|g' \
         justfile
 
-# 3. Build and install FULL stack
-RUN mkdir -p /export/usr && \
+# 3. Build and install FULL stack with BuildKit caching
+# We cache:
+# - Cargo registry (downloaded crates)
+# - Cargo git (git dependencies)
+# - Target directory (compiled objects)
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/build/target \
+    mkdir -p /export/usr && \
     just install /export /usr
 
 # 4. SANitization: Remove fundamental system binaries to protect host integrity
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
 # Prepare metadata
-RUN echo 'ID=debian' > /export/extension-release.cosmic && \
-    echo 'SYSEXT_LEVEL=1' >> /export/extension-release.cosmic
+RUN echo 'ID=debian' > /export/extension-release.cosmic-epoch && \
+    echo 'VERSION_ID=13' >> /export/extension-release.cosmic-epoch && \
+    echo 'SYSEXT_LEVEL=1' >> /export/extension-release.cosmic-epoch
 
 # Stage 2: Packaging (Sysext)
 FROM busybox AS sysext
-COPY --from=builder /export/extension-release.cosmic /usr/lib/extension-release.d/extension-release.cosmic
+COPY --from=builder /export/extension-release.cosmic-epoch /usr/lib/extension-release.d/extension-release.cosmic-epoch
 COPY --from=builder /export/usr /usr
 
 # Stage 3: Packaging (.deb)
-FROM debian:testing AS deb-packager
+FROM debian:trixie AS deb-packager
 RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/lists/*
 WORKDIR /pkg
 COPY --from=builder /export/usr ./usr

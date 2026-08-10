@@ -1,7 +1,13 @@
 VERSION := "1.5.0-1~local1"
+BUILDER := "cosmic-builder"
+
+# Ensure a buildx builder with a sane cache GC policy exists (see buildkitd.toml)
+_ensure-builder:
+    @docker buildx inspect {{BUILDER}} >/dev/null 2>&1 || \
+        docker buildx create --name {{BUILDER}} --driver docker-container --config buildkitd.toml
 
 # Build all COSMIC monorepo .deb packages
-package-debs:
+package-debs: _ensure-builder
     @echo "🏗️ Injecting version {{VERSION}}..."
     sed -i "s/@VERSION@/{{VERSION}}/g" images/cosmic-epoch/packaging/debian/control
     @echo "🏗️ Building Cosmic Epoch monodeb..."

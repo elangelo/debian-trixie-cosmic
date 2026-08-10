@@ -1,11 +1,11 @@
 # Stage 1: Builder
-FROM debian:testing AS builder
+FROM debian:trixie AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Install build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential git just cargo rustc pkg-config \
+    build-essential git just curl pkg-config \
     libpipewire-0.3-dev libspa-0.2-dev libwayland-dev libxkbcommon-dev \
     libinput-dev libseat-dev libudev-dev libgbm-dev libdrm-dev \
     libdbus-1-dev libpam0g-dev libfontconfig-dev libfreetype-dev \
@@ -23,10 +23,15 @@ RUN apt-get update && apt-get install -y \
     libpoppler-glib-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Rust via rustup (system rustc in Trixie is too old)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path
+ENV CARGO_HOME=/root/.cargo
+ENV PATH=$CARGO_HOME/bin:$PATH
+
 # Memory Safety for CI
 ENV CARGO_PROFILE_RELEASE_LTO=thin
 ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
-ENV LIBCLANG_PATH=/usr/lib/llvm-21/lib
+ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
 
 WORKDIR /build
 RUN mkdir -p /export/usr
@@ -113,6 +118,7 @@ RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/us
 # Prepare metadata
 RUN mkdir -p /export/usr/lib/extension-release.d && \
     echo 'ID=debian' > /export/usr/lib/extension-release.d/extension-release.cosmic-utils && \
+    echo 'VERSION_ID=13' >> /export/usr/lib/extension-release.d/extension-release.cosmic-utils && \
     echo 'SYSEXT_LEVEL=1' >> /export/usr/lib/extension-release.d/extension-release.cosmic-utils
 
 # Stage 2: Packaging (Sysext)
@@ -120,7 +126,7 @@ FROM busybox AS sysext
 COPY --from=builder /export/usr /usr
 
 # Stage 3: Packaging (.deb)
-FROM debian:testing AS deb-packager
+FROM debian:trixie AS deb-packager
 RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/lists/*
 WORKDIR /pkg
 COPY --from=builder /export/usr ./usr
