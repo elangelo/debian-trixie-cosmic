@@ -36,83 +36,49 @@ ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
 WORKDIR /build
 RUN mkdir -p /export/usr
 
-# 2. Batch Clone and Build
+# 2. Clone sources
+#
+# NB: cloning is kept separate from building because the build steps below mount a
+# BuildKit cache over <component>/target. A cache mount pre-creates its mountpoint,
+# so `git clone` into that same directory would fail on a non-empty destination.
+COPY dbus-toggle.patch /build/
+RUN git clone --depth 1 https://github.com/cosmic-utils/tweaks.git cosmic-ext-tweaks
+RUN git clone --depth 1 https://github.com/cosmic-utils/clipboard-manager.git && \
+    cd clipboard-manager && patch -p1 < ../dbus-toggle.patch
+RUN git clone --depth 1 https://github.com/cosmic-utils/calculator.git
+RUN git clone --depth 1 https://github.com/cosmic-utils/noctua.git
+
+# 3. Build and install each component with BuildKit caching
+# We cache:
+# - Cargo registry (downloaded crates)  } shared by every component
+# - Cargo git (git dependencies)        }
+# - Each component's own target/ directory (compiled objects)
+
 # cosmic-ext-tweaks
-RUN git clone --depth 1 https://github.com/cosmic-utils/tweaks.git cosmic-ext-tweaks && \
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/build/cosmic-ext-tweaks/target,id=utils-tweaks-target \
     cd cosmic-ext-tweaks && just build-release && just rootdir=/export prefix=/usr install
 
-# cosmic-ext-applet-external-monitor-brightness
-RUN git clone --depth 1 https://github.com/cosmic-utils/cosmic-ext-applet-external-monitor-brightness.git && \
-    cd cosmic-ext-applet-external-monitor-brightness && just build-release && just rootdir=/export prefix=/usr install
-
 # clipboard-manager (Corrected repo name)
-COPY dbus-toggle.patch /build/
-RUN git clone --depth 1 https://github.com/cosmic-utils/clipboard-manager.git && \
-    cd clipboard-manager && \
-    patch -p1 < ../dbus-toggle.patch && \
-    just build-release && just rootdir=/export prefix=/usr install
-
-# cosmic-ext-applet-vigil (Keep-awake tool)
-RUN git clone --depth 1 https://github.com/cosmic-utils/cosmic-ext-applet-vigil.git && \
-    cd cosmic-ext-applet-vigil && just build-release && just rootdir=/export prefix=/usr install
-
-# chronos (Pomodoro timer)
-RUN git clone --depth 1 https://github.com/cosmic-utils/chronos.git && \
-    cd chronos && just build-release && just rootdir=/export prefix=/usr install
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/build/clipboard-manager/target,id=utils-clipboard-manager-target \
+    cd clipboard-manager && just build-release && just rootdir=/export prefix=/usr install
 
 # calculator (Simple calculator)
-RUN git clone --depth 1 https://github.com/cosmic-utils/calculator.git && \
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/build/calculator/target,id=utils-calculator-target \
     cd calculator && just build-release && just rootdir=/export prefix=/usr install
 
-# tasks (Task management application)
-RUN git clone --depth 1 https://github.com/cosmic-utils/tasks.git && \
-    cd tasks && just build-release && just rootdir=/export prefix=/usr install
-
-# app-hub (AppImage Manager)
-RUN git clone --depth 1 https://github.com/cosmic-utils/app-hub.git && \
-    cd app-hub && just build-release && just rootdir=/export prefix=/usr install
-
-# stellarshot (Backup application)
-RUN git clone --depth 1 https://github.com/cosmic-utils/stellarshot.git && \
-    cd stellarshot && just build-release && just rootdir=/export prefix=/usr install
-
-# forecast (Weather application)
-RUN git clone --depth 1 https://github.com/cosmic-utils/forecast.git && \
-    cd forecast && just build-release && just rootdir=/export prefix=/usr install
-
-# examine (System information viewer)
-RUN git clone --depth 1 https://github.com/cosmic-utils/examine.git && \
-    cd examine && just build-release && just rootdir=/export prefix=/usr install
-
-# camera (Camera application)
-RUN git clone --depth 1 https://github.com/cosmic-utils/camera.git && \
-    cd camera && just build-release && just rootdir=/export prefix=/usr install
-
-# cosmic-ext-applet-ollama (Ollama applet)
-RUN git clone --depth 1 https://github.com/cosmic-utils/cosmic-ext-applet-ollama.git && \
-    cd cosmic-ext-applet-ollama && just build-release && just rootdir=/export prefix=/usr install
-
-# minimon-applet (System monitor applet)
-RUN git clone --depth 1 https://github.com/cosmic-utils/minimon-applet.git && \
-    cd minimon-applet && just build-release && just rootdir=/export prefix=/usr install
-
-# weather-applet
-RUN git clone --depth 1 https://github.com/cosmic-utils/cosmic-ext-applet-weather.git && \
-    cd cosmic-ext-applet-weather && just build && just rootdir=/export prefix=/usr install
-
-# sysinfo-applet
-RUN git clone --depth 1 https://github.com/cosmic-utils/cosmic-ext-applet-sysinfo.git && \
-    cd cosmic-ext-applet-sysinfo && just build && just rootdir=/export prefix=/usr install
-
-# logomenu-applet
-RUN git clone --depth 1 https://github.com/cosmic-utils/cosmic-ext-applet-logomenu.git && \
-    cd cosmic-ext-applet-logomenu && just build-release && just rootdir=/export prefix=/usr install
-
 # noctua (Image viewer)
-RUN git clone --depth 1 https://github.com/cosmic-utils/noctua.git && \
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/build/noctua/target,id=utils-noctua-target \
     cd noctua && just build-release && just rootdir=/export prefix=/usr install
 
-# 3. SANitization: Remove fundamental system binaries
+# 4. SANitization: Remove fundamental system binaries
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
 # Prepare metadata
