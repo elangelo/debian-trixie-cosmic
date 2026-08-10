@@ -1,0 +1,20 @@
+# BuildKit GC policy for the "cosmic-builder" buildx builder.
+#
+# BuildKit's built-in default caps exec.cachemount (our --mount=type=cache
+# dirs for cargo registry/git and the Rust target/ dir) at ~1.8GiB / 48h,
+# which is far smaller than a full cosmic-epoch/cosmic-utils build produces.
+# That default silently evicts the incremental Cargo build cache between
+# `just package-debs` runs, making every build look like a cold build.
+#
+# NB: this builder's state lives in a docker volume on the *root* filesystem
+# (/var/lib/docker/volumes/buildx_buildkit_cosmic-builder0_state), which on
+# this host is a small-ish LVM root LV, not the spacious /home LV. An earlier
+# version of this policy allowed up to 100GiB and filled root to 100%. Keep
+# the total catch-all rule comfortably below your actual root free space.
+[worker.oci]
+  [[worker.oci.gcpolicy]]
+    filters      = ["type==source.local", "type==exec.cachemount", "type==source.git.checkout"]
+    keepDuration = 604800        # 7 days
+    keepBytes    = 10737418240   # 10 GiB
+  [[worker.oci.gcpolicy]]
+    keepBytes = 37580963840      # 35 GiB total, all cache types
