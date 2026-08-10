@@ -29,6 +29,9 @@ jobs:
           - name: cosmic-epoch
             context: images/cosmic-epoch
             image: debian-cosmic-epoch
+          - name: cosmic-utils
+            context: images/cosmic-utils
+            image: debian-cosmic-utils
 
     permissions:
       contents: read
@@ -92,7 +95,7 @@ jobs:
 
       - name: Test Package Installation
         run: |
-          docker run --rm -v $(pwd)/dist:/dist -e DEBIAN_FRONTEND=noninteractive debian:testing sh -c "apt-get update && apt-get install -y /dist/*.deb"
+          docker run --rm -v $(pwd)/dist:/dist -e DEBIAN_FRONTEND=noninteractive debian:trixie sh -c "apt-get update && apt-get install -y /dist/*.deb"
         
       - name: Upload .deb artifacts
         uses: actions/upload-artifact@v4
@@ -158,7 +161,8 @@ jobs:
             
             ### 🏗️ Artifacts
             - **Images:** `ghcr.io/${{ github.repository_owner }}/debian-cosmic-epoch:latest`
-            
+            - **Images:** `ghcr.io/${{ github.repository_owner }}/debian-cosmic-utils:latest`
+
             Download the `.deb` files below for traditional installation.
           files: dist/*.deb
           draft: false

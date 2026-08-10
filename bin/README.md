@@ -36,11 +36,14 @@ Downloads the COSMIC sysext OCI image(s) from the GitHub Container Registry and 
 ### Usage
 
 ```bash
-# Update the COSMIC stack (compositor, panel, settings, …)
+# Update only the core COSMIC stack (compositor, panel, settings, …)
 sudo cosmic-update
 
+# Update both the core stack and the utilities layer
+sudo cosmic-update utils
+
 # Pin to a specific image tag instead of 'latest'
-sudo cosmic-update v1.0.11
+sudo cosmic-update utils v1.0.11
 ```
 
 ### What it does
@@ -56,6 +59,7 @@ sudo cosmic-update v1.0.11
 | Image bucket | Staged path |
 |---|---|
 | `debian-testing-cosmic-sysext` | `/var/lib/extensions/cosmic/` |
+| `debian-testing-cosmic-utils-sysext` | `/var/lib/extensions/cosmic-utils/` |
 
 ---
 
