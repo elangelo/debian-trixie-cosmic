@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        # Only enable the D-Bus PAM helper. cosmic-greeter.service is the login
+        # manager itself (Conflicts=getty@tty1) and is installed but left disabled
+        # so it doesn't fight with whatever display manager is already active.
+        systemctl enable cosmic-greeter-daemon.service >/dev/null 2>&1 || true
+        systemctl start cosmic-greeter-daemon.service >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

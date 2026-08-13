@@ -52,6 +52,19 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     mkdir -p /export/usr && \
     just install /export /usr
 
+# 3b. Install cosmic-greeter's systemd unit files.
+# Upstream's cosmic-greeter justfile `install` recipe deliberately does not install
+# these: they live under debian/ purely for a real dh_installsystemd pass in
+# cosmic-greeter's own Debian packaging, which this monorepo build never runs. Without
+# this, cosmic-greeter-daemon.service (needed for the login PAM helper to run at all)
+# is silently dropped from the resulting package. cosmic-greeter.service is installed
+# too but left disabled, since enabling it would fight with whatever display manager
+# is already active.
+RUN install -Dm0644 /build/cosmic-greeter/debian/cosmic-greeter-daemon.service \
+        /export/usr/lib/systemd/system/cosmic-greeter-daemon.service && \
+    install -Dm0644 /build/cosmic-greeter/debian/cosmic-greeter.service \
+        /export/usr/lib/systemd/system/cosmic-greeter.service
+
 # 4. SANitization: Remove fundamental system binaries to protect host integrity
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
