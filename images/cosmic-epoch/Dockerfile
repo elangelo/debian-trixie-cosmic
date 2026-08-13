@@ -55,6 +55,23 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 # 4. SANitization: Remove fundamental system binaries to protect host integrity
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
+# 5. Derive runtime dependencies from what the binaries actually link against.
+# The hand-maintained Depends list drifted every time a soname changed upstream
+# (e.g. libdisplay-info1 -> 3 while Trixie ships 2) and silently missed libraries
+# that were build-depended on but never declared (e.g. libdav1d). This runs here,
+# in the builder, because it is the only stage with every runtime library present.
+# The result is substituted into DEBIAN/control's @SHLIBS_DEPENDS@ placeholder.
+RUN apt-get update && apt-get install -y --no-install-recommends dpkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /shlibdeps/debian && \
+    printf 'Source: cosmic-epoch-monorepo\n\nPackage: cosmic-epoch-monorepo\nArchitecture: amd64\n' \
+        > /shlibdeps/debian/control && \
+    cd /shlibdeps && \
+    dpkg-shlibdeps -O $(find /export/usr -type f -perm -u+x) > /shlibdeps/raw && \
+    sed 's/^shlibs:Depends=//' /shlibdeps/raw > /shlibdeps/depends.txt && \
+    test -s /shlibdeps/depends.txt && \
+    cat /shlibdeps/depends.txt
+
 # Prepare metadata
 RUN echo 'ID=debian' > /export/extension-release.cosmic-epoch && \
     echo 'VERSION_ID=13' >> /export/extension-release.cosmic-epoch && \
@@ -74,6 +91,12 @@ COPY --from=builder /export/usr ./usr
 RUN rm -f ./usr/bin/env ./usr/bin/bash ./usr/bin/sh ./usr/bin/dash ./usr/bin/python*
 COPY packaging/debian ./DEBIAN
 RUN chmod -R 755 ./DEBIAN
+# Substitute the generated runtime dependencies, and refuse to build if the
+# placeholder is still present (an empty/failed shlibdeps run must not ship).
+COPY --from=builder /shlibdeps/depends.txt /shlibdeps.txt
+RUN sed -i "s|@SHLIBS_DEPENDS@|$(cat /shlibdeps.txt)|" ./DEBIAN/control && \
+    ! grep -q '@SHLIBS_DEPENDS@' ./DEBIAN/control && \
+    grep '^Depends:' ./DEBIAN/control
 # Ensure version consistency
 RUN dpkg-deb --build . /cosmic-epoch-monorepo.deb
 

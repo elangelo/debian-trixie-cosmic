@@ -81,6 +81,20 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 # 4. SANitization: Remove fundamental system binaries
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
+# 5. Derive runtime dependencies from what the binaries actually link against.
+# Run here, in the builder, because it is the only stage with every runtime
+# library present. Substituted into DEBIAN/control's @SHLIBS_DEPENDS@ placeholder.
+RUN apt-get update && apt-get install -y --no-install-recommends dpkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /shlibdeps/debian && \
+    printf 'Source: cosmic-utils-monorepo\n\nPackage: cosmic-utils-monorepo\nArchitecture: amd64\n' \
+        > /shlibdeps/debian/control && \
+    cd /shlibdeps && \
+    dpkg-shlibdeps -O $(find /export/usr -type f -perm -u+x) > /shlibdeps/raw && \
+    sed 's/^shlibs:Depends=//' /shlibdeps/raw > /shlibdeps/depends.txt && \
+    test -s /shlibdeps/depends.txt && \
+    cat /shlibdeps/depends.txt
+
 # Prepare metadata
 RUN mkdir -p /export/usr/lib/extension-release.d && \
     echo 'ID=debian' > /export/usr/lib/extension-release.d/extension-release.cosmic-utils && \
@@ -100,6 +114,12 @@ COPY --from=builder /export/usr ./usr
 RUN rm -f ./usr/bin/env ./usr/bin/bash ./usr/bin/sh ./usr/bin/dash ./usr/bin/python*
 COPY packaging/debian ./DEBIAN
 RUN chmod -R 755 ./DEBIAN
+# Substitute the generated runtime dependencies, and refuse to build if the
+# placeholder is still present (an empty/failed shlibdeps run must not ship).
+COPY --from=builder /shlibdeps/depends.txt /shlibdeps.txt
+RUN sed -i "s|@SHLIBS_DEPENDS@|$(cat /shlibdeps.txt)|" ./DEBIAN/control && \
+    ! grep -q '@SHLIBS_DEPENDS@' ./DEBIAN/control && \
+    grep '^Depends:' ./DEBIAN/control
 # Ensure version consistency
 RUN dpkg-deb --build . /cosmic-utils-monorepo.deb
 
