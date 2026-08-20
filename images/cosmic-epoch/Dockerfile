@@ -65,6 +65,17 @@ RUN install -Dm0644 /build/cosmic-greeter/debian/cosmic-greeter-daemon.service \
     install -Dm0644 /build/cosmic-greeter/debian/cosmic-greeter.service \
         /export/usr/lib/systemd/system/cosmic-greeter.service
 
+# 3c. Install cosmic-greeter's PAM stack and greetd session config. Like the systemd
+# units above, upstream's justfile never installs these either -- they only exist for
+# a real dh_installsystemd/dh_installpam pass. Without the PAM file greetd has no login
+# stack to authenticate against, and without the greetd config there is no session to
+# hand off to. These land under /export/etc, which only the .deb picks up (the sysext
+# stage intentionally stays /usr-only).
+RUN install -Dm0644 /build/cosmic-greeter/debian/cosmic-greeter.pam \
+        /export/etc/pam.d/cosmic-greeter && \
+    install -Dm0644 /build/cosmic-greeter/cosmic-greeter.toml \
+        /export/etc/greetd/cosmic-greeter.toml
+
 # 4. SANitization: Remove fundamental system binaries to protect host integrity
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
@@ -100,6 +111,7 @@ FROM debian:trixie AS deb-packager
 RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/lists/*
 WORKDIR /pkg
 COPY --from=builder /export/usr ./usr
+COPY --from=builder /export/etc ./etc
 # Final safety check: Remove any essential system binaries that might have leaked in
 RUN rm -f ./usr/bin/env ./usr/bin/bash ./usr/bin/sh ./usr/bin/dash ./usr/bin/python*
 COPY packaging/debian ./DEBIAN
