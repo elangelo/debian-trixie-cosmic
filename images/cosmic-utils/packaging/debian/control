@@ -1,13 +1,13 @@
 Package: cosmic-utils-monorepo
-Version: 1.5.0-1~local1
+Version: 1.6.0-1~local1
 Architecture: amd64
 Maintainer: Ritesh Raj Sarraf <rrs@researchut.com>
 Section: x11
 Priority: optional
 Homepage: https://github.com/rickysarraf/debian-cosmic
 Depends: @SHLIBS_DEPENDS@
-Recommends: cosmic-epoch-monorepo (= 1.5.0-1~local1)
-Built-Using: cosmic-epoch-monorepo (= 1.5.0-1~local1)
+Recommends: cosmic-epoch-monorepo (= 1.6.0-1~local1)
+Built-Using: cosmic-epoch-monorepo (= 1.6.0-1~local1)
 Description: Unified COSMIC Community Utilities
  This package provides a collection of community-developed utilities 
  and applets for the COSMIC Desktop Environment, including Tweaks, 
