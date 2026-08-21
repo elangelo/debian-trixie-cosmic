@@ -1,5 +1,5 @@
 Package: cosmic-epoch-monorepo
-Version: 1.5.0-1~local1
+Version: 1.6.0-1~local1
 Architecture: amd64
 Maintainer: Ritesh Raj Sarraf <rrs@researchut.com>
 Section: x11
