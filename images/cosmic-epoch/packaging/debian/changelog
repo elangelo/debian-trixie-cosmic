@@ -1,3 +1,20 @@
+cosmic-epoch-monorepo (1.6.0-1~local2) unstable; urgency=low
+
+  * Bypass nvidia-sleep.sh's VT switch on suspend/hibernate.
+    Ship systemd drop-ins for nvidia-suspend.service,
+    nvidia-hibernate.service and nvidia-suspend-then-hibernate.service that
+    write to /proc/driver/nvidia/suspend directly instead of going through
+    nvidia-sleep.sh, whose "chvt 63" exists for the NVIDIA X driver. On a
+    Wayland session the VT switch deactivates the logind session, and
+    cosmic-comp does not survive losing DRM master across a suspend: it
+    page-flips before logind re-grants the devices, takes EACCES, and
+    escalates to a permanent "Device lost" on every card. Symptom was a
+    frozen desktop after every resume on hybrid Intel+NVIDIA hardware,
+    recoverable only by restarting the compositor from another VT.
+    See pop-os/cosmic-comp#2078 and pop-os/cosmic-epoch#3012.
+
+ -- Samuel Verstraete <samuel.verstraete@ontoforce.com>  Fri, 28 Aug 2026 13:30:00 +0000
+
 cosmic-epoch-monorepo (1.6.0-1) unstable; urgency=low
 
   * New upstream release: Cosmic Epoch 1.6.0.

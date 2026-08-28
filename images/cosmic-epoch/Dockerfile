@@ -76,6 +76,22 @@ RUN install -Dm0644 /build/cosmic-greeter/debian/cosmic-greeter.pam \
     install -Dm0644 /build/cosmic-greeter/cosmic-greeter.toml \
         /export/etc/greetd/cosmic-greeter.toml
 
+# 3d. Install systemd drop-ins that bypass nvidia-sleep.sh's "chvt 63" VT switch.
+# That VT switch is there for the NVIDIA X driver, but it deactivates the logind
+# session, and cosmic-comp does not recover from losing DRM master across a
+# suspend -- it ends up with "Device lost" on every card and a frozen desktop.
+# See the header comment in each .conf for the full rationale and upstream issues.
+# These are inert on machines with no NVIDIA driver, since the units they extend
+# will not exist there.
+COPY packaging/nvidia/nvidia-suspend.conf \
+     packaging/nvidia/nvidia-hibernate.conf \
+     packaging/nvidia/nvidia-suspend-then-hibernate.conf \
+     /tmp/nvidia-dropins/
+RUN for u in nvidia-suspend nvidia-hibernate nvidia-suspend-then-hibernate; do \
+        install -Dm0644 /tmp/nvidia-dropins/$u.conf \
+            /export/usr/lib/systemd/system/$u.service.d/50-cosmic-no-vt-switch.conf; \
+    done && rm -rf /tmp/nvidia-dropins
+
 # 4. SANitization: Remove fundamental system binaries to protect host integrity
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 
