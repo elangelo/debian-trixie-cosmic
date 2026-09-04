@@ -1,3 +1,49 @@
+cosmic-epoch-monorepo (1.7.0-1) unstable; urgency=low
+
+  * New upstream release: COSMIC Epoch 1.7.0.
+  * Built primarily to test whether it improves suspend/resume on hybrid
+    Intel+NVIDIA hardware. 1.6.0 still collapses on some resumes: an atomic
+    modeset is rejected ("New screen configuration invalid"), the card1
+    re-open then fails with EINVAL, DRM master is lost and both cards end up
+    "Device lost", taking the session with them. The nvidia-sleep.sh VT
+    switch was already ruled out as the cause (see 1.6.0-1~local2), as was
+    NVreg_EnableS0ixPowerManagement and any display topology change.
+    Upstream: pop-os/cosmic-comp#2078, #2273, pop-os/cosmic-epoch#3012.
+  * Build just 1.58.0 from upstream's release binary instead of using Trixie's
+    just 1.40.0. From epoch-1.7.0 the component justfiles depend on recipes in
+    submodules (`clean: cargo::clean`), a syntax added in just 1.42.0; 1.40.0
+    fails to parse it, breaking `just install` at cosmic-applibrary. The same
+    change is applied to the cosmic-utils builder, which tracks master and has
+    the same exposure.
+  * Rewrite upstream's `just <component>/<recipe>` path invocations to
+    `cd <component> && just <recipe>`. From epoch-1.7.0 the component justfiles
+    delegate to a cargo.just module whose recipes are all marked [no-cd], so they
+    run in the invocation directory rather than the justfile's; upstream's path
+    invocation therefore runs cargo from the monorepo root, which has no
+    Cargo.toml, and `just install` dies at cosmic-applibrary. Applied to all such
+    lines, which is correct for [no-cd] recipes and harmless for components that
+    have not migrated. Not a just version issue -- reproduced identically on
+    just 1.42, 1.45, 1.50 and 1.58.
+  * Run `xdgen` alongside `build-release` for cosmic-applibrary and
+    cosmic-launcher. Both generate their .desktop and .metainfo.xml into
+    target/xdgen and install from there, but upstream wires xdgen into `default`
+    and `vendor` only -- never into build-release or install -- so epoch's
+    justfile never runs it and install fails on a missing
+    target/xdgen/*.desktop. These are the only two components affected: every
+    other component with a justfile has `default: build-release` and installs
+    nothing out of target/xdgen.
+  * Symlink every component's ./target at the shared /build/target, which is the
+    BuildKit cache mount. The cd patch above is needed so cargo finds each
+    component's Cargo.toml, but it also makes the justfiles' `target/release/<bin>`
+    and `target/xdgen` paths resolve inside the component rather than at the
+    monorepo root, giving ~25 separate target dirs, none on the cache mount, which
+    fills the disk partway through the build. The symlink restores exactly the
+    layout epoch-1.6.0 built with -- one shared target, reached by [no-cd] recipes
+    running at /build -- with no edits to the component justfiles. Ten components
+    install out of target/xdgen, so this also keeps those paths consistent.
+
+ -- Samuel Verstraete <samuel.verstraete@ontoforce.com>  Wed, 02 Sep 2026 11:00:00 +0000
+
 cosmic-epoch-monorepo (1.6.0-1~local2) unstable; urgency=low
 
   * Bypass nvidia-sleep.sh's VT switch on suspend/hibernate.

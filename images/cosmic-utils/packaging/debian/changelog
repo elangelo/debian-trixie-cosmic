@@ -1,3 +1,12 @@
+cosmic-utils-monorepo (1.7.0-1) unstable; urgency=low
+
+  * Synchronized with COSMIC Epoch 1.7.0.
+  * Restore the @VERSION@ placeholder in the Recommends and Built-Using
+    fields, which had been left with a substituted 1.6.0-1~local1 baked in
+    and so would have pinned every future build to that epoch version.
+
+ -- Samuel Verstraete <samuel.verstraete@ontoforce.com>  Wed, 02 Sep 2026 11:00:00 +0000
+
 cosmic-utils-monorepo (1.6.0-1) unstable; urgency=low
 
   * Synchronized with COSMIC Epoch 1.6.0.
