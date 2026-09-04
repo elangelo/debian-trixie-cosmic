@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Install build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential git just curl pkg-config \
+    build-essential git curl pkg-config \
     libpipewire-0.3-dev libspa-0.2-dev libwayland-dev libxkbcommon-dev \
     libinput-dev libseat-dev libudev-dev libgbm-dev libdrm-dev \
     libdbus-1-dev libpam0g-dev libfontconfig-dev libfreetype-dev \
@@ -22,6 +22,17 @@ RUN apt-get update && apt-get install -y \
     gtk-update-icon-cache hicolor-icon-theme bsdextrautils patch libcairo2-dev \
     libpoppler-glib-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# just >= 1.42 is required from epoch-1.7.0 onwards: the component justfiles depend on
+# recipes in submodules (e.g. `clean: cargo::clean`), a syntax added in just 1.42.0.
+# Debian Trixie ships 1.40.0, which fails to parse it outright -- not an unstable-feature
+# gate, so --unstable does not help. Installed into /usr/local/bin, which precedes
+# /usr/bin in PATH, so upstream's require("just") resolves to this one.
+ARG JUST_VERSION=1.58.0
+RUN curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+        | tar -xzC /usr/local/bin just \
+    && just --version
+
 
 # Install Rust via rustup (system rustc in Trixie is too old)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path

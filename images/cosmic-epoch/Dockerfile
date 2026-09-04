@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # 1. Add stable build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential git just curl pkg-config \
+    build-essential git curl pkg-config \
     libpipewire-0.3-dev libspa-0.2-dev libwayland-dev libxkbcommon-dev \
     libinput-dev libseat-dev libudev-dev libgbm-dev libdrm-dev \
     libdbus-1-dev libpam0g-dev libfontconfig-dev libfreetype-dev \
@@ -18,6 +18,16 @@ RUN apt-get update && apt-get install -y \
     wayland-protocols extra-cmake-modules scdoc sed make libclang-dev \
     gtk-update-icon-cache hicolor-icon-theme bsdextrautils \
     && rm -rf /var/lib/apt/lists/*
+
+# just >= 1.42 is required from epoch-1.7.0 onwards: the component justfiles depend on
+# recipes in submodules (e.g. `clean: cargo::clean`), a syntax added in just 1.42.0.
+# Debian Trixie ships 1.40.0, which fails to parse it outright -- not an unstable-feature
+# gate, so --unstable does not help. Installed into /usr/local/bin, which precedes
+# /usr/bin in PATH, so upstream's require("just") resolves to this one.
+ARG JUST_VERSION=1.58.0
+RUN curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+        | tar -xzC /usr/local/bin just \
+    && just --version
 
 WORKDIR /build
 
@@ -32,14 +42,53 @@ ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
 
 # Mark the directory as safe for git
 RUN git config --global --add safe.directory /build && \
-    git clone --recursive --branch epoch-1.6.0 https://github.com/pop-os/cosmic-epoch.git . && \
+    git clone --recursive --branch epoch-1.7.0 https://github.com/pop-os/cosmic-epoch.git . && \
     # Patch: xdg-desktop-portal-cosmic dropped its Makefile in epoch-1.2.0 and migrated to justfile.
     # The upstream cosmic-epoch justfile still calls `make -C xdg-desktop-portal-cosmic`, so we
     # replace those calls with the equivalent `just` invocations.
     sed -i \
         -e 's|{{ make }} -C xdg-desktop-portal-cosmic all|{{ just }} xdg-desktop-portal-cosmic/build|g' \
         -e 's|{{ make }} -C xdg-desktop-portal-cosmic install DESTDIR={{rootdir}} prefix={{prefix}}|{{ just }} rootdir={{rootdir}} prefix={{prefix}} xdg-desktop-portal-cosmic/install|g' \
-        justfile
+        justfile && \
+    # Patch: from epoch-1.7.0 the component justfiles delegate to a `cargo.just` module
+    # whose recipes are all marked [no-cd], meaning they run in the *invocation*
+    # directory rather than the justfile's. Upstream's `just <component>/<recipe>` path
+    # invocation therefore runs cargo from the monorepo root, where there is no
+    # Cargo.toml, and the build dies at cosmic-applibrary. Rewrite every path invocation
+    # to cd into the component first, which is correct for [no-cd] recipes and harmless
+    # for the components that have not migrated. Verified against all just 1.42-1.58;
+    # this is not a just version issue. `{{ make }} -C` lines are left alone, as make
+    # handles its own directory. Safe because `just install` is called with an absolute
+    # rootdir (/export) below -- a relative rootdir would not survive the cd.
+    sed -i -E \
+        's|\{\{ just \}\} (.*[[:space:]])?([^[:space:]/]+)/([^[:space:]/]+)[[:space:]]*$|cd \2 \&\& {{ just }} \1\3|' \
+        justfile && \
+    # Patch: cosmic-applibrary and cosmic-launcher generate their .desktop and
+    # .metainfo.xml into target/xdgen via an `xdgen` recipe, and their `install`
+    # recipes install from there. Upstream wires xdgen into `default` and `vendor`
+    # only -- never into build-release or install -- so epoch's justfile, which calls
+    # build-release and install directly, never runs it and install dies on a missing
+    # target/xdgen/*.desktop. Run xdgen alongside build-release for exactly those two.
+    # These are the only two affected: every other component with a justfile has
+    # `default: build-release` and installs nothing out of target/xdgen.
+    sed -i -E \
+        's@(cd (cosmic-applibrary|cosmic-launcher) \&\& \{\{ just \}\}) build-release@\1 xdgen build-release@' \
+        justfile && \
+    # Point every component's ./target at the single shared /build/target, which is the
+    # BuildKit cache mount used by the build step below. The cd patch above is required
+    # so cargo can find each component's Cargo.toml, but it also makes every path the
+    # justfiles use -- `target/release/<bin>` and the `target/xdgen` that ten components
+    # install their .desktop/.metainfo.xml from -- resolve inside the component instead
+    # of at the monorepo root. That yields ~25 separate target dirs, none of them on the
+    # cache mount, which overflows the disk partway through the build. Symlinking
+    # restores exactly the layout epoch-1.6.0 built with (one shared target, reached via
+    # [no-cd] recipes running at /build) while keeping cargo able to find its manifests,
+    # and needs no edits to the component justfiles.
+    mkdir -p /build/target && \
+    for d in */; do \
+        d="${d%/}"; \
+        if [ -f "$d/Cargo.toml" ]; then rm -rf "$d/target" && ln -sfn /build/target "$d/target"; fi; \
+    done
 
 # 3. Build and install FULL stack with BuildKit caching
 # We cache:
