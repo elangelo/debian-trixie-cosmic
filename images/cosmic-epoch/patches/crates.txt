@@ -1,0 +1,10 @@
+# Crates patched into the build, one per line: <name> <version> <sha256 of the .crate>
+#
+# Versions are pinned deliberately. A [patch.crates-io] entry only takes effect for
+# dependency requirements the pinned version satisfies, so if upstream COSMIC ever moves to
+# a semver-incompatible release these patches would silently stop applying -- the
+# cargo-metadata assertion in the Dockerfile exists to turn that into a build failure
+# rather than a quietly unpatched package.
+wayland-backend 0.3.15 2857dd20b54e916ec7253b3d6b4d5c4d7d4ca2c33c2e11c6c76a99bd8744755d
+wayland-client 0.31.14 645c7c96bb74690c3189b5c9cb4ca1627062bb23693a4fad9d8c3de958260144
+calloop-wayland-source 0.4.1 138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa

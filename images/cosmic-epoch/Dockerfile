@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     libgstreamer-plugins-base1.0-dev clang llvm-dev cmake \
     libpixman-1-dev libwayland-bin libdisplay-info-dev libxcb-xinput-dev libdav1d-dev \
     wayland-protocols extra-cmake-modules scdoc sed make libclang-dev \
-    gtk-update-icon-cache hicolor-icon-theme bsdextrautils \
+    gtk-update-icon-cache hicolor-icon-theme bsdextrautils patch \
     && rm -rf /var/lib/apt/lists/*
 
 # just >= 1.42 is required from epoch-1.7.0 onwards: the component justfiles depend on
@@ -89,6 +89,94 @@ RUN git config --global --add safe.directory /build && \
         d="${d%/}"; \
         if [ -f "$d/Cargo.toml" ]; then rm -rf "$d/target" && ln -sfn /build/target "$d/target"; fi; \
     done
+
+COPY patches /tmp/patches
+
+# 2a. Patch the cosmic-epoch submodules themselves. These are git checkouts, not crates.io
+# tarballs, so they are patched in place rather than through [patch.crates-io], and the
+# submodule commit that `git clone --recursive --branch epoch-1.7.0` pins is the version
+# guard -- no sha256 needed. `patch --fuzz=0` fails the build if a submodule moves.
+#
+# patches/submodules/<component>-NNNN-<slug>.patch, applied in sorted order per component.
+# See patches/README.md for the analysis behind each one.
+RUN set -eu; \
+    if [ -d /tmp/patches/submodules ]; then \
+        applied=0; \
+        for pf in $(ls /tmp/patches/submodules/*.patch 2>/dev/null | sort); do \
+            base=$(basename "$pf"); \
+            comp=$(echo "$base" | sed -E 's/-[0-9]{4}-.*$//'); \
+            if [ ! -d "/build/$comp" ]; then \
+                echo "FAIL $base names component '$comp', which is not a submodule of" >&2; \
+                echo "     cosmic-epoch. Rename the patch or drop it." >&2; \
+                exit 1; \
+            fi; \
+            echo "==> $comp: $base"; \
+            patch -p1 --fuzz=0 -d "/build/$comp" < "$pf"; \
+            applied=$((applied + 1)); \
+        done; \
+        echo "applied $applied submodule patch(es)"; \
+    else \
+        echo "no patches/submodules directory; nothing to do"; \
+    fi
+
+# 2b. Patch the Wayland client crates that make COSMIC clients busy-loop at 100% CPU and
+# flood the log after a fatal protocol error. Full analysis in patches/README.md; in short,
+# three upstream defects compose so that a protocol error (as raised when cosmic-comp loses
+# its DRM render node across a suspend) is logged unconditionally and then swallowed, so
+# every client spins forever instead of exiting. Measured before patching: ~15 processes at
+# ~100% CPU, ~170,000 log lines/sec, 17 GB of /var/log/syslog in two hours.
+#
+# The crates are unpacked as local checkouts under /patched and wired in through a
+# [patch.crates-io] table in CARGO_HOME/config.toml. That applies to every component's cargo
+# invocation without touching any of the ~25 component manifests, which matters because they
+# are independent cargo projects, not one workspace. `just build-release` runs plain
+# `cargo build --release` with no --locked, so cargo is free to re-resolve.
+#
+# Two guards, because a silently-unpatched package is the failure mode worth avoiding:
+# tarballs are pinned by sha256 and `patch --fuzz=0` fails the build if a crate's contents
+# no longer match, and the cargo-metadata assertion below fails the build if the patches stop
+# being picked up at all (e.g. upstream COSMIC moving to a semver-incompatible release, which
+# a [patch.crates-io] entry would silently no longer satisfy).
+RUN set -eu; \
+    mkdir -p /patched; \
+    grep -vE '^[[:space:]]*(#|$)' /tmp/patches/crates.txt | while read -r name version sha; do \
+        echo "==> $name $version"; \
+        curl -fsSL "https://static.crates.io/crates/$name/$name-$version.crate" \
+            -o "/tmp/$name.crate"; \
+        echo "$sha  /tmp/$name.crate" | sha256sum -c -; \
+        tar -xzf "/tmp/$name.crate" -C /patched; \
+        rm -f "/tmp/$name.crate"; \
+        for pf in /tmp/patches/"$name-$version"-*.patch; do \
+            echo "    applying $(basename "$pf")"; \
+            patch -p1 --fuzz=0 -d "/patched/$name-$version" < "$pf"; \
+        done; \
+        printf '%s = { path = "/patched/%s-%s" }\n' "$name" "$name" "$version" \
+            >> /tmp/patch-table.toml; \
+    done; \
+    test -s /tmp/patch-table.toml; \
+    { echo ""; echo "[patch.crates-io]"; cat /tmp/patch-table.toml; } >> "$CARGO_HOME/config.toml"; \
+    rm -f /tmp/patch-table.toml; \
+    echo "--- $CARGO_HOME/config.toml ---"; cat "$CARGO_HOME/config.toml"
+
+# 2c. Assert the patches are actually in the dependency graph. cosmic-panel is used as the
+# probe because it depends on all three crates (it was also the process observed spinning).
+# Without this, a version bump upstream would produce a cleanly-built but unpatched package.
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    set -eu; \
+    cd /build/cosmic-panel; \
+    cargo metadata --format-version 1 > /tmp/metadata.json; \
+    for d in /patched/*/; do \
+        if grep -qF "${d}Cargo.toml" /tmp/metadata.json; then \
+            echo "OK   patched crate in graph: ${d}"; \
+        else \
+            echo "FAIL ${d} is not in cosmic-panel's dependency graph -- the" >&2; \
+            echo "     [patch.crates-io] entry no longer satisfies any requirement." >&2; \
+            echo "     Re-pin the version in patches/crates.txt." >&2; \
+            exit 1; \
+        fi; \
+    done; \
+    rm -f /tmp/metadata.json
 
 # 3. Build and install FULL stack with BuildKit caching
 # We cache:

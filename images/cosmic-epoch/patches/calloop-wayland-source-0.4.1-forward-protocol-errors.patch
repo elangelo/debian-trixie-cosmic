@@ -1,0 +1,42 @@
+# calloop-wayland-source 0.4.1: forward protocol errors from flush_queue.
+# Upstream report: flush_queue() matched only WaylandError::Io, dropping Protocol.
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -220,16 +220,27 @@
+ }
+ 
+ fn flush_queue<D>(queue: &mut EventQueue<D>) -> Result<(), calloop::Error> {
+-    if let Err(WaylandError::Io(err)) = queue.flush() {
+-        // WouldBlock error means the compositor could not process all
+-        // our messages quickly. Either it is slowed
+-        // down or we are a spammer. Should not really
+-        // happen, if it does we do nothing and will flush again later
+-        if err.kind() != io::ErrorKind::WouldBlock {
+-            // in case of error, forward it and fast-exit
+-            log_error!("Error trying to flush the wayland display: {}", err);
+-            return Err(err.into());
+-        }
++    match queue.flush() {
++        Ok(()) => {},
++        Err(WaylandError::Io(err)) => {
++            // WouldBlock error means the compositor could not process all
++            // our messages quickly. Either it is slowed
++            // down or we are a spammer. Should not really
++            // happen, if it does we do nothing and will flush again later
++            if err.kind() != io::ErrorKind::WouldBlock {
++                // in case of error, forward it and fast-exit
++                log_error!("Error trying to flush the wayland display: {}", err);
++                return Err(err.into());
++            }
++        },
++        Err(WaylandError::Protocol(err)) => {
++            // A protocol error is fatal and sticky: the connection can never make progress
++            // again. Previously this arm did not exist, so the `if let` above dropped it and
++            // `flush_queue` returned `Ok(())`, leaving the source registered and the event loop
++            // spinning at full CPU on a dead connection. Forward it so the loop can shut down.
++            log_error!("Protocol error trying to flush the wayland display: {}", err);
++            return Err(io::Error::from(Errno::PROTO).into());
++        },
+     }
+     Ok(())
+ }
