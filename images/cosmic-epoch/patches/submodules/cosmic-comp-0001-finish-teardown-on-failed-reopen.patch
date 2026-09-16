@@ -1,0 +1,126 @@
+Subject: [PATCH] kms: finish the teardown when reopen_device fails
+
+`reopen_device` tears the old device down before it constructs the replacement:
+it `shift_remove`s the device from `backend.drm_devices`, drops its surfaces and
+calls `syncobj_state.close_device()`. `Device::new` is then called with `?`, so
+if it fails the function returns with all of that already done and none of the
+end-of-function cleanup performed.
+
+The caller cannot repair it. `resume_session` responds to a failed re-open by
+calling `device_removed`, but that resolves its `DrmNode` by iterating
+`backend.drm_devices` -- from which the device has just been removed -- so it
+fails with "Couldn't find drm node for {dev}" before removing anything:
+
+    Failed to update drm device /dev/dri/card0. Re-opening
+    Failed to re-open drm device /dev/dri/card0. Device lost
+    Failed to close drm device /dev/dri/card0.
+
+Two pieces of state are left dangling, and both outlive the failure for the rest
+of the session:
+
+  * The connectors in `old_state.outputs` are never withdrawn, so they stay
+    advertised as `wl_output` globals with no device behind them. A later
+    `device_added` for the same card adds a second global per connector. On a
+    hybrid Intel+NVIDIA laptop that resumed without its iGPU this showed up as
+    two `eDP-1` globals at conflicting positions (0,927 and 7040,0), the internal
+    panel being unreachable, and no way to address either one by name.
+
+  * The syncobj manager keeps its global while its device is closed, so every
+    client that imports a timeline gets
+    "wp_linux_drm_syncobj_manager_v1: error 1: failed to import syncobj timeline:
+    No device". Chromium treats a Wayland protocol error as fatal and calls
+    `__builtin_trap()`, so all Electron apps died at launch (SIGTRAP) until the
+    session was restarted.
+
+Finish the teardown on the failure path: withdraw the orphaned outputs the same
+way the success path and `device_removed` do, and withdraw the syncobj global
+rather than leaving it bound to nothing -- the same fallback already used below
+when the replacement device turns out not to support syncobj eventfds, after
+which clients fall back to implicit sync.
+
+This does not try to make the re-open succeed; the device is genuinely gone at
+that point. It confines the damage to the device that was lost, so the rest of
+the session stays usable and a later hotplug or VT switch can add the card back
+cleanly.
+
+Note the `?` on `new_device.enumerate_surfaces()` and on `populate_modes` further
+down have the same shape, but leak less: by then `new_device` exists and the
+syncobj device has been handed over. They are left alone here to keep the change
+reviewable.
+
+diff --git a/src/backend/kms/device.rs b/src/backend/kms/device.rs
+index 418a16f3..2109e806 100644
+--- a/src/backend/kms/device.rs
++++ b/src/backend/kms/device.rs
+@@ -447,14 +447,69 @@ impl State {
+                 }
+             };
+ 
+-            let mut new_device = Device::new(
++            let mut new_device = match Device::new(
+                 dev,
+                 path,
+                 &mut backend.session,
+                 &mut self.common,
+                 dh,
+                 Some(reusable),
+-            )?;
++            ) {
++                Ok(new_device) => new_device,
++                Err(err) => {
++                    // Everything above already tore the old device down: it was
++                    // `shift_remove`d from `backend.drm_devices`, its surfaces were
++                    // dropped and the syncobj manager's device was closed. Returning
++                    // here without undoing that leaves the compositor in a state that
++                    // poisons the whole session, and the caller cannot clean up for us:
++                    // `device_removed` finds its `DrmNode` by iterating
++                    // `backend.drm_devices`, so it fails with "Couldn't find drm node"
++                    // before it removes anything.
++                    //
++                    // Two things must be finished by hand.
++                    //
++                    // First the outputs. On the success path the connectors left in
++                    // `old_state.outputs` are withdrawn at the end of this function. Skip
++                    // that and they stay advertised as `wl_output` globals with no device
++                    // behind them; a later `device_added` for the same card then adds a
++                    // *second* global for each connector. Observed as two `eDP-1` outputs
++                    // at conflicting positions, one of them unreachable.
++                    let outputs_removed =
++                        old_state.outputs.values().cloned().collect::<Vec<_>>();
++                    self.common
++                        .output_configuration_state
++                        .remove_heads(outputs_removed.iter());
++                    if backend.session.is_active() {
++                        for output in outputs_removed {
++                            self.common.remove_output(&output);
++                        }
++                    } else {
++                        self.common.output_configuration_state.update();
++                    }
++
++                    // Then the syncobj manager. Its device was closed above and there is
++                    // no new device to hand it, so leaving the global up makes every
++                    // client that imports a timeline fail with
++                    // "failed to import syncobj timeline: No device". Chromium treats that
++                    // protocol error as fatal and calls `__builtin_trap()`, so Electron
++                    // apps die on launch for the rest of the session. Withdraw the global
++                    // instead, exactly as the branch below does when the replacement
++                    // device turns out not to support syncobj eventfds, and clients fall
++                    // back to implicit sync.
++                    if let Some(guard) = syncobj_guard {
++                        drop(guard);
++                        if let Some(syncobj_state) = backend.syncobj_state.take() {
++                            dh.remove_global::<State>(syncobj_state.into_global());
++                        }
++                    }
++
++                    if let Err(err) = backend.refresh_used_devices() {
++                        warn!(?err, "Failed to refresh used devices after a failed re-open");
++                    }
++
++                    return Err(err);
++                }
++            };
+ 
+             if let Some(guard) = syncobj_guard {
+                 let import_device = new_device.drm.device().device_fd().clone();

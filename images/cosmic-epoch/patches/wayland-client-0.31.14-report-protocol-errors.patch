@@ -1,0 +1,38 @@
+# wayland-client 0.31.14: report protocol errors from dispatch_pending instead of Ok(0).
+# Upstream report: dispatching_impl() used unwrap_or_default(), causing a client busy loop.
+--- a/src/event_queue.rs
++++ b/src/event_queue.rs
+@@ -474,14 +474,30 @@
+         // from some external connection, only invoking `EventQueue::dispatch_pending()` will be enough to
+         // process the events assuming the host program already takes care of reading the socket.
+         //
+-        // We purposefully ignore the possible error, as that would make us early return in a way that might
+-        // lose events, and the potential socket error will be caught in other places anyway.
+-        let mut dispatched = backend.backend.dispatch_inner_queue().unwrap_or_default();
++        // An I/O error is deliberately ignored here: it would make us early return in a way that
++        // might lose events, and it is reported to the caller by `read()`/`flush()` instead.
++        //
++        // A protocol error must not be ignored the same way. It is fatal and *sticky* -- the
++        // backend stores it and every later dispatch returns it again -- so reporting it as
++        // `Ok(0)` ("nothing pending") leaves the caller's event loop spinning on a connection that
++        // can never make progress again, at full CPU and with no way to notice. Nothing downstream
++        // catches it either: `calloop-wayland-source` only inspects `WaylandError::Io`. Remember
++        // it, dispatch whatever is already queued, then report it.
++        let (mut dispatched, protocol_error) = match backend.backend.dispatch_inner_queue() {
++            Ok(dispatched) => (dispatched, None),
++            Err(WaylandError::Protocol(err)) => (0, Some(err)),
++            Err(WaylandError::Io(_)) => (0, None),
++        };
+ 
+         while let Some(QueueEvent(cb, msg, odata)) = Self::try_next(&qhandle.inner) {
+             cb(backend, msg, data, odata, qhandle)?;
+             dispatched += 1;
+         }
++
++        if let Some(err) = protocol_error {
++            return Err(DispatchError::Backend(WaylandError::Protocol(err)));
++        }
++
+         Ok(dispatched)
+     }
+ 
