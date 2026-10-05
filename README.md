@@ -14,7 +14,8 @@ We provide two primary delivery formats to cater to different user needs:
 
 ### 1. Monorepo .deb Packages
 Unified Debian packages for traditional installation.
-- **`cosmic-epoch-monorepo`**: The full Core DE stack (Compositor, Panel, Settings, etc.).
+- **`cosmic-epoch-monorepo`**: The Core DE stack (Panel, Settings, etc.).
+- **`cosmic-epoch-comp`**: The compositor, split out so it can be rebuilt on its own. Pulled in by `cosmic-epoch-monorepo`.
 - **`cosmic-utils-monorepo`**: The community utilities stack (Tweaks, Vigil, Chronos, etc.).
 
 Packages are automatically versioned (e.g., `1.0.11-1.build42`) and promoted to [GitHub Releases](https://github.com/rickysarraf/debian-cosmic/releases).
@@ -44,6 +45,16 @@ You can build the monorepo packages locally using the provided `justfile`:
 just package-debs
 ```
 
+### Iterating on cosmic-comp
+The compositor is its own package, `cosmic-epoch-comp`, so a compositor fix doesn't need the full `package-debs` build, which takes about an hour:
+```bash
+just comp-checkout   # once: work/cosmic-comp at the pinned commit, existing patches as commits
+# edit and commit in work/cosmic-comp, then:
+just comp-export     # new commits -> images/cosmic-epoch/patches/submodules/
+just package-comp    # builds only dist/cosmic-epoch-comp.deb
+sudo apt install ./dist/cosmic-epoch-comp.deb   # then log out and back in
+```
+
 ### Installation
 
 #### Option 1: Official APT Repository (Recommended)
@@ -65,7 +76,7 @@ sudo apt install cosmic-epoch-monorepo cosmic-utils-monorepo
 #### Option 2: Direct .deb Download
 Download the `.deb` files directly from our [Releases](https://github.com/rickysarraf/debian-cosmic/releases) page and install them manually:
 ```bash
-sudo apt install ./cosmic-epoch-monorepo*.deb ./cosmic-utils-monorepo*.deb
+sudo apt install ./cosmic-epoch-monorepo*.deb ./cosmic-epoch-comp*.deb ./cosmic-utils-monorepo*.deb
 ```
 
 #### Option 3: System Extension (`sysext`)
