@@ -1,0 +1,168 @@
+Subject: [PATCH] kms: don't block on surface threads while holding the device locks
+
+Enabling the first output on a secondary GPU deadlocks the compositor. On a
+hybrid laptop (Intel iGPU driving eDP-1, NVIDIA dGPU driving every external
+connector) `cosmic-randr enable DP-3` freezes the whole desktop: no redraws, no
+input, only a hard reset gets out. The kernel stays healthy -- logind still
+handles the power key and the journal keeps logging.
+
+The output-configuration request runs under a `KmsGuard`, which holds every
+device's `DrmOutputManager` lock. Turning on an output on the dGPU makes its
+render node "used" for the first time, so `KmsGuard::refresh_used_devices` ->
+`update_surface_nodes` calls `Surface::add_node` for *every* existing surface,
+and `add_node` blocks until the surface thread acknowledges `NodeAdded`.
+
+The surface thread of an already-running output can be mid-`redraw`, inside
+`DrmOutput::with_compositor`, waiting for a read lock on that same
+`DrmOutputManager`. It never gets back to its event loop to acknowledge, and
+the main thread never releases the lock. gdb on the hung compositor:
+
+    Thread 1 "cosmic-comp"
+      std::sync::mpmc::array::Channel<T>::recv
+      cosmic_comp::backend::kms::surface::Surface::add_node
+      cosmic_comp::backend::kms::device::InnerDevice::update_surface_nodes
+      cosmic_comp::backend::kms::KmsGuard::refresh_used_devices
+      cosmic_comp::backend::kms::KmsGuard::apply_config_for_outputs
+      ...output_configuration
+
+    Thread "surface-eDP-1"
+      std::sys::sync::rwlock::futex::RwLock::read_contended
+      smithay::backend::drm::output::DrmOutput<A,F,U,G>::with_compositor
+      cosmic_comp::backend::kms::surface::SurfaceThreadState::redraw
+
+It is a race on the surface thread's redraw timing, so it doesn't fire every
+time. It also hits the greeter when booting with the external screens attached.
+
+Give `add_node`/`remove_node` a `wait` flag, threaded through
+`update_surface_nodes`, and don't wait on the `KmsGuard` path. Skipping the ack
+is safe there: the command channel is ordered, so the surface thread still
+processes `NodeAdded`/`NodeRemoved` before anything sent after it, and
+`known_nodes`/`feedback` are updated synchronously on the main thread as before.
+The callers that run without the device locks (`KmsState::refresh_used_devices`,
+`clear_used_devices`, `device_removed`) keep waiting, which preserves the
+"fd is closed before the udev device_removed callback returns" guarantee.
+
+---
+diff --git a/src/backend/kms/device.rs b/src/backend/kms/device.rs
+index ffa8069..b2a776f 100644
+--- a/src/backend/kms/device.rs
++++ b/src/backend/kms/device.rs
+@@ -425,7 +425,7 @@ impl State {
+                 .values_mut()
+                 .flat_map(|device| device.inner.surfaces.values_mut())
+             {
+-                surface.remove_node(device.inner.render_node);
++                surface.remove_node(device.inner.render_node, true);
+             }
+             let syncobj_guard =
+                 if is_primary && let Some(syncobj_state) = backend.syncobj_state.as_mut() {
+@@ -1197,6 +1197,7 @@ impl InnerDevice {
+         &mut self,
+         used_devices: &HashSet<DrmNode>,
+         others: &[&'b mut Self],
++        wait: bool,
+     ) -> Result<()>
+     where
+         Self: 'b,
+@@ -1204,7 +1205,7 @@ impl InnerDevice {
+         for surface in self.surfaces.values_mut() {
+             let known_nodes = surface.known_nodes().clone();
+             for gone_device in known_nodes.difference(used_devices) {
+-                surface.remove_node(*gone_device);
++                surface.remove_node(*gone_device, wait);
+             }
+             for new_device in used_devices.difference(&known_nodes) {
+                 let (render_node, egl, gbm) = if self.render_node == *new_device {
+@@ -1235,6 +1236,7 @@ impl InnerDevice {
+                         ContextPriority::High,
+                     )
+                     .context("Failed to create shared EGL context")?,
++                    wait,
+                 );
+             }
+         }
+diff --git a/src/backend/kms/mod.rs b/src/backend/kms/mod.rs
+index 36c6407..8a0b2d2 100644
+--- a/src/backend/kms/mod.rs
++++ b/src/backend/kms/mod.rs
+@@ -750,7 +750,7 @@ impl KmsState {
+         for device in self.drm_devices.values_mut() {
+             if device.inner.egl.take().is_some() {
+                 self.api.as_mut().remove_node(&device.inner.render_node);
+-                device.inner.update_surface_nodes(&empty_devices, &[])?;
++                device.inner.update_surface_nodes(&empty_devices, &[], true)?;
+             }
+         }
+ 
+@@ -792,7 +792,7 @@ impl KmsState {
+                 .values_mut()
+                 .map(|d| &mut d.inner)
+                 .partition::<Vec<_>, _>(|d| d.render_node == node);
+-            device[0].update_surface_nodes(&used_devices, &others)?;
++            device[0].update_surface_nodes(&used_devices, &others, true)?;
+         }
+ 
+         Ok(())
+@@ -854,7 +854,9 @@ impl KmsGuard<'_> {
+                 .values_mut()
+                 .map(|d| &mut *d.inner)
+                 .partition::<Vec<_>, _>(|d| d.render_node == node);
+-            device[0].update_surface_nodes(&used_devices, &others)?;
++            // Don't wait for the surface threads: we hold every device's DrmOutputManager
++            // lock, which a surface thread mid-redraw is blocked on (DrmOutput::with_compositor).
++            device[0].update_surface_nodes(&used_devices, &others, false)?;
+         }
+ 
+         Ok(())
+diff --git a/src/backend/kms/surface/mod.rs b/src/backend/kms/surface/mod.rs
+index cbc8938..8c9b4cc 100644
+--- a/src/backend/kms/surface/mod.rs
++++ b/src/backend/kms/surface/mod.rs
+@@ -358,7 +358,17 @@ impl Surface {
+         self.active.load(Ordering::SeqCst)
+     }
+ 
+-    pub fn add_node(&mut self, node: DrmNode, gbm: GbmAllocator<DrmDeviceFd>, egl: EGLContext) {
++    /// `wait` must be false while any device's `DrmOutputManager` is locked (e.g. through a
++    /// `KmsGuard`): the surface thread may itself be blocked on that lock in `redraw`, and
++    /// would then never get to acknowledge the command. The command channel is ordered, so
++    /// the node is still added before the thread handles anything sent after it.
++    pub fn add_node(
++        &mut self,
++        node: DrmNode,
++        gbm: GbmAllocator<DrmDeviceFd>,
++        egl: EGLContext,
++        wait: bool,
++    ) {
+         self.known_nodes.insert(node);
+         let (tx, rx) = std::sync::mpsc::sync_channel(1);
+         let _ = self.thread_command.send(ThreadCommand::NodeAdded {
+@@ -367,10 +377,13 @@ impl Surface {
+             egl,
+             sync: tx,
+         });
+-        let _ = rx.recv();
++        if wait {
++            let _ = rx.recv();
++        }
+     }
+ 
+-    pub fn remove_node(&mut self, node: DrmNode) {
++    /// See `add_node` for when `wait` must be false.
++    pub fn remove_node(&mut self, node: DrmNode, wait: bool) {
+         self.known_nodes.remove(&node);
+         self.feedback.remove(&node);
+         let (tx, rx) = std::sync::mpsc::sync_channel(1);
+@@ -379,7 +392,9 @@ impl Surface {
+             .send(ThreadCommand::NodeRemoved { node, sync: tx });
+         // Block so we can be sure the file descriptor is closed
+         // (which is relevant for the udev device_removed callback).
+-        let _ = rx.recv();
++        if wait {
++            let _ = rx.recv();
++        }
+     }
+ 
+     pub fn on_vblank(&self, metadata: Option<DrmEventMetadata>) {
+-- 
+

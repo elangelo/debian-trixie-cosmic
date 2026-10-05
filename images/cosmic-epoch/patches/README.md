@@ -152,3 +152,27 @@ really is gone -- it confines the damage to the lost device so the session stays
 Verified with `cargo check --release` against the pinned submodule commit
 31827ed2409f92d3bc224d3ce601c6f2136183fb (clean) and `patch -p1 --fuzz=0 --dry-run`
 against a pristine checkout.
+
+### cosmic-comp-0002-no-blocking-node-sync-under-device-locks.patch
+
+Fixes the "whole machine freezes" when the WD19TB dock's ultrawides (card1 `DP-3`/`DP-4`,
+NVIDIA dGPU) are turned on while the session is running only on the Intel `eDP-1`. Observed
+2026-10-05: four hard resets in a row, plus a blank greeter when booting with the dock
+attached. The kernel was fine (logind still handled the power key and the journal kept
+logging); the compositor was deadlocked.
+
+`cosmic-randr enable` runs `KmsGuard::apply_config_for_outputs`, which holds every device's
+`DrmOutputManager` lock. The first enabled output on the dGPU makes its render node "used",
+so `refresh_used_devices` -> `update_surface_nodes` calls `Surface::add_node` on every
+surface, and `add_node` blocks until the surface thread acknowledges `NodeAdded`. The
+`surface-eDP-1` thread was mid-`redraw`, in `DrmOutput::with_compositor`, blocked on a read
+lock of that same manager, so it never acknowledged. gdb backtraces from the hung
+compositor are in the patch description.
+
+The patch adds a `wait` flag to `add_node`/`remove_node`/`update_surface_nodes`. Only the
+`KmsGuard` path passes `false`. The command channel is ordered, so the surface thread still
+handles the node change before anything sent after it. The lock-free callers keep waiting,
+which keeps the fd-closed-before-udev-callback guarantee for `device_removed`.
+
+Verified with `patch -p1 --fuzz=0` (after 0001) against a pristine checkout of the
+submodule commit pinned by epoch-1.8.0, a55785993e8ef6aad38862cb1a9e1ccaad3c340d.
