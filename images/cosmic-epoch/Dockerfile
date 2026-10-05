@@ -42,7 +42,7 @@ ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
 
 # Mark the directory as safe for git
 RUN git config --global --add safe.directory /build && \
-    git clone --recursive --branch epoch-1.7.0 https://github.com/pop-os/cosmic-epoch.git . && \
+    git clone --recursive --branch epoch-1.8.0 https://github.com/pop-os/cosmic-epoch.git . && \
     # Patch: xdg-desktop-portal-cosmic dropped its Makefile in epoch-1.2.0 and migrated to justfile.
     # The upstream cosmic-epoch justfile still calls `make -C xdg-desktop-portal-cosmic`, so we
     # replace those calls with the equivalent `just` invocations.
@@ -62,17 +62,6 @@ RUN git config --global --add safe.directory /build && \
     # rootdir (/export) below -- a relative rootdir would not survive the cd.
     sed -i -E \
         's|\{\{ just \}\} (.*[[:space:]])?([^[:space:]/]+)/([^[:space:]/]+)[[:space:]]*$|cd \2 \&\& {{ just }} \1\3|' \
-        justfile && \
-    # Patch: cosmic-applibrary and cosmic-launcher generate their .desktop and
-    # .metainfo.xml into target/xdgen via an `xdgen` recipe, and their `install`
-    # recipes install from there. Upstream wires xdgen into `default` and `vendor`
-    # only -- never into build-release or install -- so epoch's justfile, which calls
-    # build-release and install directly, never runs it and install dies on a missing
-    # target/xdgen/*.desktop. Run xdgen alongside build-release for exactly those two.
-    # These are the only two affected: every other component with a justfile has
-    # `default: build-release` and installs nothing out of target/xdgen.
-    sed -i -E \
-        's@(cd (cosmic-applibrary|cosmic-launcher) \&\& \{\{ just \}\}) build-release@\1 xdgen build-release@' \
         justfile && \
     # Point every component's ./target at the single shared /build/target, which is the
     # BuildKit cache mount used by the build step below. The cd patch above is required
