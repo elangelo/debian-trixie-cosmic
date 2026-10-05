@@ -1,0 +1,16 @@
+Package: cosmic-epoch-comp
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Ritesh Raj Sarraf <rrs@researchut.com>
+Section: x11
+Priority: optional
+Homepage: https://github.com/rickysarraf/debian-cosmic
+Depends: @SHLIBS_DEPENDS@
+Conflicts: cosmic-comp
+Breaks: cosmic-epoch-monorepo (<< @VERSION@)
+Replaces: cosmic-epoch-monorepo (<< @VERSION@)
+Description: COSMIC compositor (cosmic-comp), from the cosmic-epoch monorepo
+ The Wayland compositor of the System76 COSMIC Desktop Environment, built
+ from the cosmic-comp submodule pinned by cosmic-epoch. Packaged separately
+ from cosmic-epoch-monorepo so compositor fixes can be rebuilt and installed
+ on their own.

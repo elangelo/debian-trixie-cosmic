@@ -6,8 +6,8 @@ Section: x11
 Priority: optional
 Homepage: https://github.com/rickysarraf/debian-cosmic
 Depends: @SHLIBS_DEPENDS@
-Recommends: cosmic-epoch-monorepo (= 1.6.0-1~local1)
-Built-Using: cosmic-epoch-monorepo (= 1.6.0-1~local1)
+Recommends: cosmic-epoch-monorepo (= @VERSION@)
+Built-Using: cosmic-epoch-monorepo (= @VERSION@)
 Description: Unified COSMIC Community Utilities
  This package provides a collection of community-developed utilities 
  and applets for the COSMIC Desktop Environment, including Tweaks, 

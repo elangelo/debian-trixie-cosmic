@@ -72,7 +72,7 @@ jobs:
           # Update the main version in changelog (robust matching)
           sed -i "1s/([^)]*)/($BUILD_VERSION)/" ${{ matrix.context }}/packaging/debian/changelog
           # Update placeholders in control file
-          sed -i "s/@VERSION@/$BUILD_VERSION/g" ${{ matrix.context }}/packaging/debian/control
+          find ${{ matrix.context }}/packaging -name control -exec sed -i "s/@VERSION@/$BUILD_VERSION/g" {} +
 
       - name: Build ${{ matrix.name }}
         uses: docker/build-push-action@v5

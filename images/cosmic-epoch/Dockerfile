@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Stage 1: Builder
-FROM debian:trixie AS builder
+# Stage 1: Toolchain, shared by the cosmic-comp and epoch builds
+FROM debian:trixie AS toolchain
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     libgstreamer-plugins-base1.0-dev clang llvm-dev cmake \
     libpixman-1-dev libwayland-bin libdisplay-info-dev libxcb-xinput-dev libdav1d-dev \
     wayland-protocols extra-cmake-modules scdoc sed make libclang-dev \
-    gtk-update-icon-cache hicolor-icon-theme bsdextrautils patch \
+    gtk-update-icon-cache hicolor-icon-theme bsdextrautils patch dpkg-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # just >= 1.42 is required from epoch-1.7.0 onwards: the component justfiles depend on
@@ -29,7 +29,6 @@ RUN curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/
         | tar -xzC /usr/local/bin just \
     && just --version
 
-WORKDIR /build
 
 # 2. Install Rust via rustup (system rustc in Trixie is too old)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path
@@ -40,73 +39,12 @@ ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 ENV CARGO_PROFILE_RELEASE_PANIC=abort
 ENV LIBCLANG_PATH=/usr/lib/llvm-19/lib
 
-# Mark the directory as safe for git
-RUN git config --global --add safe.directory /build && \
-    git clone --recursive --branch epoch-1.8.0 https://github.com/pop-os/cosmic-epoch.git . && \
-    # Patch: xdg-desktop-portal-cosmic dropped its Makefile in epoch-1.2.0 and migrated to justfile.
-    # The upstream cosmic-epoch justfile still calls `make -C xdg-desktop-portal-cosmic`, so we
-    # replace those calls with the equivalent `just` invocations.
-    sed -i \
-        -e 's|{{ make }} -C xdg-desktop-portal-cosmic all|{{ just }} xdg-desktop-portal-cosmic/build|g' \
-        -e 's|{{ make }} -C xdg-desktop-portal-cosmic install DESTDIR={{rootdir}} prefix={{prefix}}|{{ just }} rootdir={{rootdir}} prefix={{prefix}} xdg-desktop-portal-cosmic/install|g' \
-        justfile && \
-    # Patch: from epoch-1.7.0 the component justfiles delegate to a `cargo.just` module
-    # whose recipes are all marked [no-cd], meaning they run in the *invocation*
-    # directory rather than the justfile's. Upstream's `just <component>/<recipe>` path
-    # invocation therefore runs cargo from the monorepo root, where there is no
-    # Cargo.toml, and the build dies at cosmic-applibrary. Rewrite every path invocation
-    # to cd into the component first, which is correct for [no-cd] recipes and harmless
-    # for the components that have not migrated. Verified against all just 1.42-1.58;
-    # this is not a just version issue. `{{ make }} -C` lines are left alone, as make
-    # handles its own directory. Safe because `just install` is called with an absolute
-    # rootdir (/export) below -- a relative rootdir would not survive the cd.
-    sed -i -E \
-        's|\{\{ just \}\} (.*[[:space:]])?([^[:space:]/]+)/([^[:space:]/]+)[[:space:]]*$|cd \2 \&\& {{ just }} \1\3|' \
-        justfile && \
-    # Point every component's ./target at the single shared /build/target, which is the
-    # BuildKit cache mount used by the build step below. The cd patch above is required
-    # so cargo can find each component's Cargo.toml, but it also makes every path the
-    # justfiles use -- `target/release/<bin>` and the `target/xdgen` that ten components
-    # install their .desktop/.metainfo.xml from -- resolve inside the component instead
-    # of at the monorepo root. That yields ~25 separate target dirs, none of them on the
-    # cache mount, which overflows the disk partway through the build. Symlinking
-    # restores exactly the layout epoch-1.6.0 built with (one shared target, reached via
-    # [no-cd] recipes running at /build) while keeping cargo able to find its manifests,
-    # and needs no edits to the component justfiles.
-    mkdir -p /build/target && \
-    for d in */; do \
-        d="${d%/}"; \
-        if [ -f "$d/Cargo.toml" ]; then rm -rf "$d/target" && ln -sfn /build/target "$d/target"; fi; \
-    done
-
-COPY patches /tmp/patches
-
-# 2a. Patch the cosmic-epoch submodules themselves. These are git checkouts, not crates.io
-# tarballs, so they are patched in place rather than through [patch.crates-io], and the
-# submodule commit that `git clone --recursive --branch epoch-1.7.0` pins is the version
-# guard -- no sha256 needed. `patch --fuzz=0` fails the build if a submodule moves.
-#
-# patches/submodules/<component>-NNNN-<slug>.patch, applied in sorted order per component.
-# See patches/README.md for the analysis behind each one.
-RUN set -eu; \
-    if [ -d /tmp/patches/submodules ]; then \
-        applied=0; \
-        for pf in $(ls /tmp/patches/submodules/*.patch 2>/dev/null | sort); do \
-            base=$(basename "$pf"); \
-            comp=$(echo "$base" | sed -E 's/-[0-9]{4}-.*$//'); \
-            if [ ! -d "/build/$comp" ]; then \
-                echo "FAIL $base names component '$comp', which is not a submodule of" >&2; \
-                echo "     cosmic-epoch. Rename the patch or drop it." >&2; \
-                exit 1; \
-            fi; \
-            echo "==> $comp: $base"; \
-            patch -p1 --fuzz=0 -d "/build/$comp" < "$pf"; \
-            applied=$((applied + 1)); \
-        done; \
-        echo "applied $applied submodule patch(es)"; \
-    else \
-        echo "no patches/submodules directory; nothing to do"; \
-    fi
+# Stage ordering matters for rebuild time. Everything above the sources stage -- the
+# toolchain and the patched crates.io crates -- must not depend on the submodule patches:
+# re-extracting /patched gives every file a fresh mtime, cargo treats that as a change to a
+# path dependency, and every component that links wayland-client rebuilds (~1h). Keeping
+# the submodule patches in a later COPY means a cosmic-comp patch only rebuilds cosmic-comp.
+COPY patches/crates.txt patches/*.patch /tmp/patches/
 
 # 2b. Patch the Wayland client crates that make COSMIC clients busy-loop at 100% CPU and
 # flood the log after a fatal protocol error. Full analysis in patches/README.md; in short,
@@ -147,6 +85,50 @@ RUN set -eu; \
     rm -f /tmp/patch-table.toml; \
     echo "--- $CARGO_HOME/config.toml ---"; cat "$CARGO_HOME/config.toml"
 
+# Stage 2: Sources -- cosmic-epoch and its submodules, patched
+FROM toolchain AS sources
+
+WORKDIR /build
+
+# Mark the directory as safe for git
+RUN git config --global --add safe.directory /build && \
+    git clone --recursive --branch epoch-1.8.0 https://github.com/pop-os/cosmic-epoch.git . && \
+    # Patch: xdg-desktop-portal-cosmic dropped its Makefile in epoch-1.2.0 and migrated to justfile.
+    # The upstream cosmic-epoch justfile still calls `make -C xdg-desktop-portal-cosmic`, so we
+    # replace those calls with the equivalent `just` invocations.
+    sed -i \
+        -e 's|{{ make }} -C xdg-desktop-portal-cosmic all|{{ just }} xdg-desktop-portal-cosmic/build|g' \
+        -e 's|{{ make }} -C xdg-desktop-portal-cosmic install DESTDIR={{rootdir}} prefix={{prefix}}|{{ just }} rootdir={{rootdir}} prefix={{prefix}} xdg-desktop-portal-cosmic/install|g' \
+        justfile && \
+    # Patch: from epoch-1.7.0 the component justfiles delegate to a `cargo.just` module
+    # whose recipes are all marked [no-cd], meaning they run in the *invocation*
+    # directory rather than the justfile's. Upstream's `just <component>/<recipe>` path
+    # invocation therefore runs cargo from the monorepo root, where there is no
+    # Cargo.toml, and the build dies at cosmic-applibrary. Rewrite every path invocation
+    # to cd into the component first, which is correct for [no-cd] recipes and harmless
+    # for the components that have not migrated. Verified against all just 1.42-1.58;
+    # this is not a just version issue. `{{ make }} -C` lines are left alone, as make
+    # handles its own directory. Safe because `just install` is called with an absolute
+    # rootdir (/export) below -- a relative rootdir would not survive the cd.
+    sed -i -E \
+        's|\{\{ just \}\} (.*[[:space:]])?([^[:space:]/]+)/([^[:space:]/]+)[[:space:]]*$|cd \2 \&\& {{ just }} \1\3|' \
+        justfile && \
+    # Point every component's ./target at the single shared /build/target, which is the
+    # BuildKit cache mount used by the build step below. The cd patch above is required
+    # so cargo can find each component's Cargo.toml, but it also makes every path the
+    # justfiles use -- `target/release/<bin>` and the `target/xdgen` that ten components
+    # install their .desktop/.metainfo.xml from -- resolve inside the component instead
+    # of at the monorepo root. That yields ~25 separate target dirs, none of them on the
+    # cache mount, which overflows the disk partway through the build. Symlinking
+    # restores exactly the layout epoch-1.6.0 built with (one shared target, reached via
+    # [no-cd] recipes running at /build) while keeping cargo able to find its manifests,
+    # and needs no edits to the component justfiles.
+    mkdir -p /build/target && \
+    for d in */; do \
+        d="${d%/}"; \
+        if [ -f "$d/Cargo.toml" ]; then rm -rf "$d/target" && ln -sfn /build/target "$d/target"; fi; \
+    done
+
 # 2c. Assert the patches are actually in the dependency graph. cosmic-panel is used as the
 # probe because it depends on all three crates (it was also the process observed spinning).
 # Without this, a version bump upstream would produce a cleanly-built but unpatched package.
@@ -166,6 +148,77 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
         fi; \
     done; \
     rm -f /tmp/metadata.json
+
+COPY patches/submodules /tmp/patches/submodules
+
+# 2a. Patch the cosmic-epoch submodules themselves. These are git checkouts, not crates.io
+# tarballs, so they are patched in place rather than through [patch.crates-io], and the
+# submodule commit that `git clone --recursive --branch epoch-1.7.0` pins is the version
+# guard -- no sha256 needed. `patch --fuzz=0` fails the build if a submodule moves.
+#
+# patches/submodules/<component>-NNNN-<slug>.patch, applied in sorted order per component.
+# See patches/README.md for the analysis behind each one.
+RUN set -eu; \
+    if [ -d /tmp/patches/submodules ]; then \
+        applied=0; \
+        for pf in $(ls /tmp/patches/submodules/*.patch 2>/dev/null | sort); do \
+            base=$(basename "$pf"); \
+            comp=$(echo "$base" | sed -E 's/-[0-9]{4}-.*$//'); \
+            if [ ! -d "/build/$comp" ]; then \
+                echo "FAIL $base names component '$comp', which is not a submodule of" >&2; \
+                echo "     cosmic-epoch. Rename the patch or drop it." >&2; \
+                exit 1; \
+            fi; \
+            echo "==> $comp: $base"; \
+            patch -p1 --fuzz=0 -d "/build/$comp" < "$pf"; \
+            applied=$((applied + 1)); \
+        done; \
+        echo "applied $applied submodule patch(es)"; \
+    else \
+        echo "no patches/submodules directory; nothing to do"; \
+    fi
+
+# Stage 3: cosmic-comp, built and packaged on its own as cosmic-epoch-comp.
+# Most local fixes are compositor fixes, so it is split out of the epoch package: a
+# change to a cosmic-comp patch then rebuilds only this stage, and `just package-comp`
+# builds only this package. It gets its own target cache, separate from the epoch one.
+FROM sources AS comp-builder
+ENV CARGO_TARGET_DIR=/comp-target
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,id=cosmic-comp-target,target=/comp-target \
+    make -C /build/cosmic-comp all && \
+    make -C /build/cosmic-comp install DESTDIR=/export prefix=/usr
+# Same shlibdeps derivation as the epoch build (see step 5 there).
+RUN mkdir -p /shlibdeps/debian && \
+    printf 'Source: cosmic-epoch-comp\n\nPackage: cosmic-epoch-comp\nArchitecture: amd64\n' \
+        > /shlibdeps/debian/control && \
+    cd /shlibdeps && \
+    dpkg-shlibdeps -O /export/usr/bin/cosmic-comp > /shlibdeps/raw && \
+    sed 's/^shlibs:Depends=//' /shlibdeps/raw > /shlibdeps/depends.txt && \
+    test -s /shlibdeps/depends.txt && \
+    cat /shlibdeps/depends.txt
+
+FROM debian:trixie AS comp-deb-packager
+WORKDIR /pkg
+COPY --from=comp-builder /export/usr ./usr
+COPY packaging/comp/debian ./DEBIAN
+RUN chmod -R 755 ./DEBIAN
+COPY --from=comp-builder /shlibdeps/depends.txt /shlibdeps.txt
+RUN sed -i "s#@SHLIBS_DEPENDS@#$(cat /shlibdeps.txt)#" ./DEBIAN/control && \
+    ! grep -q '@SHLIBS_DEPENDS@' ./DEBIAN/control && \
+    grep '^Depends:' ./DEBIAN/control
+RUN dpkg-deb --build . /cosmic-epoch-comp.deb
+
+# `just package-comp` builds this target only.
+FROM busybox AS comp
+COPY --from=comp-deb-packager /cosmic-epoch-comp.deb /cosmic-epoch-comp.deb
+
+# Stage 4: the rest of the epoch stack
+FROM sources AS builder
+
+# Drop cosmic-comp from upstream's build/install/clean recipes; it is built above.
+RUN sed -i '/cosmic-comp/d' justfile && ! grep -q cosmic-comp justfile
 
 # 3. Build and install FULL stack with BuildKit caching
 # We cache:
@@ -227,8 +280,6 @@ RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/us
 # that were build-depended on but never declared (e.g. libdav1d). This runs here,
 # in the builder, because it is the only stage with every runtime library present.
 # The result is substituted into DEBIAN/control's @SHLIBS_DEPENDS@ placeholder.
-RUN apt-get update && apt-get install -y --no-install-recommends dpkg-dev \
-    && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /shlibdeps/debian && \
     printf 'Source: cosmic-epoch-monorepo\n\nPackage: cosmic-epoch-monorepo\nArchitecture: amd64\n' \
         > /shlibdeps/debian/control && \
@@ -243,12 +294,13 @@ RUN echo 'ID=debian' > /export/extension-release.cosmic-epoch && \
     echo 'VERSION_ID=13' >> /export/extension-release.cosmic-epoch && \
     echo 'SYSEXT_LEVEL=1' >> /export/extension-release.cosmic-epoch
 
-# Stage 2: Packaging (Sysext)
+# Stage 5: Packaging (Sysext) -- epoch and cosmic-comp together, as before the split
 FROM busybox AS sysext
 COPY --from=builder /export/extension-release.cosmic-epoch /usr/lib/extension-release.d/extension-release.cosmic-epoch
 COPY --from=builder /export/usr /usr
+COPY --from=comp-builder /export/usr /usr
 
-# Stage 3: Packaging (.deb)
+# Stage 6: Packaging (.deb)
 FROM debian:trixie AS deb-packager
 RUN apt-get update && apt-get install -y bsdextrautils && rm -rf /var/lib/apt/lists/*
 WORKDIR /pkg
@@ -261,7 +313,7 @@ RUN chmod -R 755 ./DEBIAN
 # Substitute the generated runtime dependencies, and refuse to build if the
 # placeholder is still present (an empty/failed shlibdeps run must not ship).
 COPY --from=builder /shlibdeps/depends.txt /shlibdeps.txt
-RUN sed -i "s|@SHLIBS_DEPENDS@|$(cat /shlibdeps.txt)|" ./DEBIAN/control && \
+RUN sed -i "s#@SHLIBS_DEPENDS@#$(cat /shlibdeps.txt)#" ./DEBIAN/control && \
     ! grep -q '@SHLIBS_DEPENDS@' ./DEBIAN/control && \
     grep '^Depends:' ./DEBIAN/control
 # Ensure version consistency
@@ -271,6 +323,7 @@ RUN dpkg-deb --build . /cosmic-epoch-monorepo.deb
 FROM busybox
 COPY --from=sysext /usr /usr
 COPY --from=deb-packager /cosmic-epoch-monorepo.deb /cosmic-epoch-monorepo.deb
+COPY --from=comp /cosmic-epoch-comp.deb /cosmic-epoch-comp.deb
 
 LABEL org.opencontainers.image.source="https://github.com/rickysarraf/desktop-brewery"
 LABEL org.opencontainers.image.description="Debian COSMIC System Extension and .deb Package"
