@@ -1,4 +1,4 @@
-# wayland-client 0.31.14: report protocol errors from dispatch_pending instead of Ok(0).
+# wayland-client 0.31.15: report protocol errors from dispatch_pending instead of Ok(0).
 # Upstream report: dispatching_impl() used unwrap_or_default(), causing a client busy loop.
 --- a/src/event_queue.rs
 +++ b/src/event_queue.rs

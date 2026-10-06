@@ -1,4 +1,4 @@
-VERSION := "1.8.0-1~local3"
+VERSION := "1.9.0-1~local1"
 BUILDER := "cosmic-builder"
 
 # Ensure a buildx builder with a sane cache GC policy exists (see buildkitd.toml)

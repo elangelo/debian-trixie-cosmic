@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     libgstreamer-plugins-base1.0-dev clang llvm-dev cmake \
     libpixman-1-dev libwayland-bin libdisplay-info-dev libxcb-xinput-dev libdav1d-dev \
     wayland-protocols extra-cmake-modules scdoc sed make libclang-dev \
-    gtk-update-icon-cache hicolor-icon-theme bsdextrautils patch dpkg-dev \
+    gtk-update-icon-cache hicolor-icon-theme bsdextrautils patch dpkg-dev nasm \
     && rm -rf /var/lib/apt/lists/*
 
 # just >= 1.42 is required from epoch-1.7.0 onwards: the component justfiles depend on
@@ -92,7 +92,7 @@ WORKDIR /build
 
 # Mark the directory as safe for git
 RUN git config --global --add safe.directory /build && \
-    git clone --recursive --branch epoch-1.8.0 https://github.com/pop-os/cosmic-epoch.git . && \
+    git clone --recursive --branch epoch-1.9.0 https://github.com/pop-os/cosmic-epoch.git . && \
     # Patch: xdg-desktop-portal-cosmic dropped its Makefile in epoch-1.2.0 and migrated to justfile.
     # The upstream cosmic-epoch justfile still calls `make -C xdg-desktop-portal-cosmic`, so we
     # replace those calls with the equivalent `just` invocations.

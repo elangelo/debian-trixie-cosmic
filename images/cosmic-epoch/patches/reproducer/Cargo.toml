@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 # Exact pins so the [patch.crates-io] entries (which pin the same versions COSMIC
-# Epoch 1.7.0's lockfiles resolve to) are actually selected. With loose "0.31.14"
-# requirements cargo resolves the newer 0.31.15/0.3.17 from the registry and the
+# Epoch 1.9.0's lockfiles resolve to) are actually selected. With loose "0.31.15"
+# requirements cargo can resolve newer registry releases and the
 # patches are silently ignored.
 [dependencies]
-wayland-client = "=0.31.14"
-wayland-backend = { version = "=0.3.15", features = ["client_system"] }
+wayland-client = "=0.31.15"
+wayland-backend = { version = "=0.3.17", features = ["client_system"] }
 calloop = "=0.14.4"
 calloop-wayland-source = "=0.4.1"
 libc = "0.2"
