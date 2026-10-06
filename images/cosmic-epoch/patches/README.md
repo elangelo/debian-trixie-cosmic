@@ -98,10 +98,15 @@ Two details corroborate the field diagnosis: the stock run emits exactly 2.0 log
 lines per loop iteration, matching the `strace` of the live cosmic-panel, and its
 ~9.3 MB/s matches the 10-20 MB/s observed growth of /var/log/syslog.
 
+The patches were rebased onto wayland-client 0.31.15 and wayland-backend 0.3.17 for
+epoch-1.9.0, whose lockfiles resolve to those releases: with the old 0.31.14 / 0.3.15
+pins the `[patch.crates-io]` entries were ignored. Content is unchanged; the
+wayland-backend hunk only moved by three lines.
+
 Note the `=` version pins in `reproducer/Cargo.toml`. They are required: with loose
-requirements cargo resolves the newer registry versions (0.31.15 / 0.3.17), the
-`[patch.crates-io]` entries pinned here no longer get selected, and the run silently
-tests unpatched code. The `[check]` line in `run.sh` prints the resolved graph so
+requirements cargo can resolve newer registry versions, the `[patch.crates-io]`
+entries pinned here no longer get selected, and the run silently tests unpatched
+code. The `[check]` line in `run.sh` prints the resolved graph so
 this is visible rather than assumed -- the same hazard the cargo-metadata assertion
 in the Dockerfile guards against for real builds.
 
@@ -111,7 +116,7 @@ Patches applied directly to the cosmic-epoch git submodules, rather than through
 `[patch.crates-io]`. Named `<component>-NNNN-<slug>.patch`; the Dockerfile derives
 the component by stripping `-NNNN-<slug>.patch` and fails the build if no submodule
 of that name exists. The submodule commit pinned by
-`git clone --recursive --branch epoch-1.7.0` is the version guard, so no sha256 is
+`git clone --recursive --branch epoch-1.9.0` is the version guard, so no sha256 is
 needed -- `patch --fuzz=0` fails loudly if a submodule moves under a patch.
 
 ### cosmic-comp-0001-finish-teardown-on-failed-reopen.patch
@@ -176,3 +181,6 @@ which keeps the fd-closed-before-udev-callback guarantee for `device_removed`.
 
 Verified with `patch -p1 --fuzz=0` (after 0001) against a pristine checkout of the
 submodule commit pinned by epoch-1.8.0, a55785993e8ef6aad38862cb1a9e1ccaad3c340d.
+
+Both cosmic-comp patches also apply with `patch -p1 --fuzz=0`, in order, to the
+submodule commit pinned by epoch-1.9.0, 0fbd4574ef4caf74769a617d205fd1fc909ac9b1.

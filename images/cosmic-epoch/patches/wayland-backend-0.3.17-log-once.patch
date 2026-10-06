@@ -1,8 +1,8 @@
-# wayland-backend 0.3.15: log a stored connection error only once.
+# wayland-backend 0.3.17: log a stored connection error only once.
 # Upstream report: store_and_return_error() logs unconditionally on a sticky error.
 --- a/src/sys/client_impl/mod.rs
 +++ b/src/sys/client_impl/mod.rs
-@@ -377,7 +377,13 @@
+@@ -380,7 +380,13 @@
          } else {
              WaylandError::Io(err)
          };
