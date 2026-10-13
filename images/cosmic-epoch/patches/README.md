@@ -116,7 +116,7 @@ Patches applied directly to the cosmic-epoch git submodules, rather than through
 `[patch.crates-io]`. Named `<component>-NNNN-<slug>.patch`; the Dockerfile derives
 the component by stripping `-NNNN-<slug>.patch` and fails the build if no submodule
 of that name exists. The submodule commit pinned by
-`git clone --recursive --branch epoch-1.9.0` is the version guard, so no sha256 is
+`git clone --recursive --branch epoch-1.10.0` is the version guard, so no sha256 is
 needed -- `patch --fuzz=0` fails loudly if a submodule moves under a patch.
 
 ### cosmic-comp-0001-finish-teardown-on-failed-reopen.patch
@@ -184,3 +184,8 @@ submodule commit pinned by epoch-1.8.0, a55785993e8ef6aad38862cb1a9e1ccaad3c340d
 
 Both cosmic-comp patches also apply with `patch -p1 --fuzz=0`, in order, to the
 submodule commit pinned by epoch-1.9.0, 0fbd4574ef4caf74769a617d205fd1fc909ac9b1.
+
+Both cosmic-comp patches also apply with `patch -p1 --fuzz=0`, in order, to the
+submodule commit pinned by epoch-1.10.0, 41497b42d9744d9963c4c6d17e8add49489b45ee
+(0002's `src/backend/kms/mod.rs` hunks are offset by six lines). None of the upstream
+commits since 1.9.0 touch the device-lock or teardown paths these patches change.

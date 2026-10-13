@@ -92,14 +92,7 @@ WORKDIR /build
 
 # Mark the directory as safe for git
 RUN git config --global --add safe.directory /build && \
-    git clone --recursive --branch epoch-1.9.0 https://github.com/pop-os/cosmic-epoch.git . && \
-    # Patch: xdg-desktop-portal-cosmic dropped its Makefile in epoch-1.2.0 and migrated to justfile.
-    # The upstream cosmic-epoch justfile still calls `make -C xdg-desktop-portal-cosmic`, so we
-    # replace those calls with the equivalent `just` invocations.
-    sed -i \
-        -e 's|{{ make }} -C xdg-desktop-portal-cosmic all|{{ just }} xdg-desktop-portal-cosmic/build|g' \
-        -e 's|{{ make }} -C xdg-desktop-portal-cosmic install DESTDIR={{rootdir}} prefix={{prefix}}|{{ just }} rootdir={{rootdir}} prefix={{prefix}} xdg-desktop-portal-cosmic/install|g' \
-        justfile && \
+    git clone --recursive --branch epoch-1.10.0 https://github.com/pop-os/cosmic-epoch.git . && \
     # Patch: from epoch-1.7.0 the component justfiles delegate to a `cargo.just` module
     # whose recipes are all marked [no-cd], meaning they run in the *invocation*
     # directory rather than the justfile's. Upstream's `just <component>/<recipe>` path
@@ -113,6 +106,25 @@ RUN git config --global --add safe.directory /build && \
     sed -i -E \
         's|\{\{ just \}\} (.*[[:space:]])?([^[:space:]/]+)/([^[:space:]/]+)[[:space:]]*$|cd \2 \&\& {{ just }} \1\3|' \
         justfile && \
+    # Patch: components keep dropping their Makefile for a justfile (cosmic-comp and
+    # cosmic-settings-daemon in epoch-1.10.0) while upstream's justfile still calls
+    # `{{ make }} -C <component>`. Rewrite those calls to the `just` equivalents for every
+    # component that has a justfile but no Makefile, then fail if any `make -C` still
+    # targets a component without a Makefile, so the next migration breaks here rather
+    # than half an hour into the build.
+    for d in $(grep -oP '\{\{ make \}\} -C \K[^[:space:]]+' justfile | sort -u); do \
+        if [ ! -f "$d/Makefile" ] && [ -f "$d/justfile" ]; then \
+            echo "make -> just: $d"; \
+            sed -i -E \
+                -e "s|\{\{ make \}\} -C $d all\$|cd $d \&\& {{ just }} build-release|" \
+                -e "s|\{\{ make \}\} -C $d install DESTDIR=\{\{rootdir\}\} prefix=\{\{prefix\}\}\$|cd $d \&\& {{ just }} rootdir={{rootdir}} prefix={{prefix}} install|" \
+                -e "s|\{\{ make \}\} -C $d clean\$|cd $d \&\& {{ just }} clean|" \
+                justfile; \
+        fi; \
+    done && \
+    for d in $(grep -oP '\{\{ make \}\} -C \K[^[:space:]]+' justfile | sort -u); do \
+        [ -f "$d/Makefile" ] || { echo "FAIL justfile still runs make in $d, which has no Makefile" >&2; exit 1; }; \
+    done && \
     # Point every component's ./target at the single shared /build/target, which is the
     # BuildKit cache mount used by the build step below. The cd patch above is required
     # so cargo can find each component's Cargo.toml, but it also makes every path the
@@ -182,13 +194,16 @@ RUN set -eu; \
 # Most local fixes are compositor fixes, so it is split out of the epoch package: a
 # change to a cosmic-comp patch then rebuilds only this stage, and `just package-comp`
 # builds only this package. It gets its own target cache, separate from the epoch one.
+# cosmic-comp dropped its Makefile for a justfile in epoch-1.10.0; `just install`
+# installs the same three files `make install` did. cargo.just reads CARGO_TARGET_DIR.
 FROM sources AS comp-builder
 ENV CARGO_TARGET_DIR=/comp-target
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cosmic-comp-target,target=/comp-target \
-    make -C /build/cosmic-comp all && \
-    make -C /build/cosmic-comp install DESTDIR=/export prefix=/usr
+    cd /build/cosmic-comp && \
+    just build-release && \
+    just rootdir=/export prefix=/usr install
 # Same shlibdeps derivation as the epoch build (see step 5 there).
 RUN mkdir -p /shlibdeps/debian && \
     printf 'Source: cosmic-epoch-comp\n\nPackage: cosmic-epoch-comp\nArchitecture: amd64\n' \
