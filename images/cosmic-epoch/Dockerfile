@@ -286,6 +286,20 @@ RUN for u in nvidia-suspend nvidia-hibernate nvidia-suspend-then-hibernate; do \
             /export/usr/lib/systemd/system/$u.service.d/50-cosmic-no-vt-switch.conf; \
     done && rm -rf /tmp/nvidia-dropins
 
+# 3e. Install the resume-side counterpart of the drop-ins above. Bypassing the
+# suspend-side "chvt 63" also disables nvidia-sleep.sh's resume-side switch back,
+# which is what makes logind re-grant the DRM devices. cosmic-drm-recover.service
+# runs after every resume and bounces the VT only when cosmic-comp reported a lost
+# device or a failed resume. See the script's header for the failure modes.
+# postinst enables it.
+COPY packaging/nvidia/cosmic-drm-recover /tmp/cosmic-drm-recover
+COPY packaging/nvidia/cosmic-drm-recover.service /tmp/cosmic-drm-recover.service
+RUN install -Dm0755 /tmp/cosmic-drm-recover \
+        /export/usr/libexec/cosmic-epoch/cosmic-drm-recover && \
+    install -Dm0644 /tmp/cosmic-drm-recover.service \
+        /export/usr/lib/systemd/system/cosmic-drm-recover.service && \
+    rm -f /tmp/cosmic-drm-recover /tmp/cosmic-drm-recover.service
+
 # 4. SANitization: Remove fundamental system binaries to protect host integrity
 RUN rm -f /export/usr/bin/env /export/usr/bin/bash /export/usr/bin/sh /export/usr/bin/dash
 

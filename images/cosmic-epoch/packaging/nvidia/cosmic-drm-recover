@@ -1,0 +1,65 @@
+#!/bin/sh
+# Recover cosmic-comp's DRM devices after a suspend/resume, by bouncing the VT.
+#
+# WHY: nvidia-sleep.sh normally does `fgconsole > Xorg.vt_number; chvt 63` on
+# suspend and `chvt "$saved"` on resume. The 50-cosmic-no-vt-switch.conf drop-ins
+# bypass the suspend side, because cosmic-comp cannot survive losing DRM master
+# mid-suspend (pop-os/cosmic-comp#2078). That also disables the resume-side
+# switch back, since RestoreVT is a no-op when no VT was recorded -- and the
+# resume-side switch is what makes logind revoke and re-grant the DRM devices.
+#
+# Without it, cosmic-comp's own restore path can fail permanently:
+#     Failed to update drm device /dev/dri/card0. Re-opening
+#     Failed to re-open drm device /dev/dri/card0. Device lost
+# On this machine card0 is the Intel iGPU carrying eDP-1, the internal panel, so
+# the laptop screen stays dark while the dock's externals (card1, NVIDIA) work.
+# cosmic-comp then retries rendering forever: 2026-09-09 measured 1.4 GB of
+# "Error::NoDevice" in 37.5s, peaking at 177,848 lines/sec, stopping only when
+# the VT was switched by hand.
+#
+# A second failure mode leaves no "Device lost" at all (2026-10-15):
+#     Failed to resume drm device
+# cosmic-comp keeps the device but never gets DRM master back on card1 (NVIDIA),
+# so every later modeset on the externals fails with EACCES and display settings
+# shows them but cannot turn them on. The same bounce re-grants master.
+#
+# The bounce is CONDITIONAL on purpose. A VT switch costs DRM master, which is
+# exactly what the suspend-side bypass avoids, so doing it on every resume could
+# break an otherwise healthy session. It runs only when cosmic-comp has actually
+# reported a lost device.
+#
+# Remove this once cosmic-comp handles suspend/resume properly, alongside the
+# 50-cosmic-no-vt-switch.conf drop-ins.
+set -u
+
+SETTLE=4                        # let cosmic-comp finish its restore attempt first
+LOOKBACK=$((SETTLE + 20))       # journal window to inspect, covers the whole attempt
+SPARE_VT=63                     # same scratch VT nvidia-sleep.sh uses
+GRACE=1                         # time on the spare VT before switching back
+
+sleep "$SETTLE"
+
+if ! journalctl -b -t cosmic-comp --since "-${LOOKBACK}s" --no-pager 2>/dev/null \
+        | grep -qE 'Device lost|Error::NoDevice|Failed to resume drm device'; then
+    echo "no DRM device loss or failed resume reported by cosmic-comp in the last ${LOOKBACK}s; nothing to do"
+    exit 0
+fi
+
+vt=$(fgconsole 2>/dev/null) || { echo "fgconsole failed; not bouncing"; exit 0; }
+case "$vt" in
+    ''|*[!0-9]*) echo "unexpected fgconsole output '$vt'; not bouncing"; exit 0 ;;
+esac
+
+echo "cosmic-comp lost or failed to resume a DRM device; bouncing VT $vt via $SPARE_VT to force logind to re-grant"
+if ! chvt "$SPARE_VT"; then
+    echo "chvt $SPARE_VT failed; staying on VT $vt"
+    exit 0
+fi
+sleep "$GRACE"
+if chvt "$vt"; then
+    echo "restored VT $vt"
+else
+    # Loud, because the user is now looking at a scratch VT.
+    echo "FAILED to restore VT $vt -- switch back manually: sudo chvt $vt" >&2
+    exit 1
+fi

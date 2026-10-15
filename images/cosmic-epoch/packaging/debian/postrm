@@ -5,6 +5,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     if [ -d /run/systemd/system ]; then
         systemctl stop cosmic-greeter-daemon.service >/dev/null 2>&1 || true
         systemctl disable cosmic-greeter-daemon.service >/dev/null 2>&1 || true
+        systemctl disable cosmic-drm-recover.service >/dev/null 2>&1 || true
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
 fi

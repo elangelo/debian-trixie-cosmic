@@ -9,6 +9,8 @@ if [ "$1" = "configure" ]; then
         # so it doesn't fight with whatever display manager is already active.
         systemctl enable cosmic-greeter-daemon.service >/dev/null 2>&1 || true
         systemctl start cosmic-greeter-daemon.service >/dev/null 2>&1 || true
+        # Runs on resume only (WantedBy= the sleep units), so no start here.
+        systemctl enable cosmic-drm-recover.service >/dev/null 2>&1 || true
     fi
 fi
 

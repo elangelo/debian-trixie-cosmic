@@ -1,0 +1,23 @@
+[Unit]
+Description=Restore cosmic-comp DRM devices after resume (conditional VT bounce)
+Documentation=file:/usr/libexec/cosmic-epoch/cosmic-drm-recover
+Documentation=https://github.com/pop-os/cosmic-comp/issues/2078
+# Ordering mirrors nvidia-resume.service: being After= the sleep unit and
+# WantedBy= it means this runs on RESUME, since systemd-suspend.service only
+# completes once the system is back up.
+After=systemd-suspend.service
+After=systemd-hibernate.service
+After=systemd-suspend-then-hibernate.service
+# The NVIDIA GPU must be back before we judge whether devices were lost.
+After=nvidia-resume.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/cosmic-epoch/cosmic-drm-recover
+# The script sleeps ~5s by design; keep a bound well above that.
+TimeoutStartSec=60
+
+[Install]
+WantedBy=systemd-suspend.service
+WantedBy=systemd-hibernate.service
+WantedBy=systemd-suspend-then-hibernate.service
