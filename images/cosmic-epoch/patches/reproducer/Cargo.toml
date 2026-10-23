@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 # Exact pins so the [patch.crates-io] entries (which pin the same versions COSMIC
-# Epoch 1.10.0's lockfiles resolve to) are actually selected. With loose "0.31.15"
+# Epoch 1.11.0's lockfiles resolve to) are actually selected. With loose "0.31.15"
 # requirements cargo can resolve newer registry releases and the
 # patches are silently ignored.
 [dependencies]

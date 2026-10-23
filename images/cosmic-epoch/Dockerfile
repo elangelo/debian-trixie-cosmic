@@ -92,7 +92,7 @@ WORKDIR /build
 
 # Mark the directory as safe for git
 RUN git config --global --add safe.directory /build && \
-    git clone --recursive --branch epoch-1.10.0 https://github.com/pop-os/cosmic-epoch.git . && \
+    git clone --recursive --branch epoch-1.11.0 https://github.com/pop-os/cosmic-epoch.git . && \
     # Patch: from epoch-1.7.0 the component justfiles delegate to a `cargo.just` module
     # whose recipes are all marked [no-cd], meaning they run in the *invocation*
     # directory rather than the justfile's. Upstream's `just <component>/<recipe>` path
@@ -107,8 +107,9 @@ RUN git config --global --add safe.directory /build && \
         's|\{\{ just \}\} (.*[[:space:]])?([^[:space:]/]+)/([^[:space:]/]+)[[:space:]]*$|cd \2 \&\& {{ just }} \1\3|' \
         justfile && \
     # Patch: components keep dropping their Makefile for a justfile (cosmic-comp and
-    # cosmic-settings-daemon in epoch-1.10.0) while upstream's justfile still calls
-    # `{{ make }} -C <component>`. Rewrite those calls to the `just` equivalents for every
+    # cosmic-settings-daemon in epoch-1.10.0) before upstream's justfile stops calling
+    # `{{ make }} -C <component>` (fixed for both in epoch-1.11.0, so currently a no-op).
+    # Rewrite those calls to the `just` equivalents for every
     # component that has a justfile but no Makefile, then fail if any `make -C` still
     # targets a component without a Makefile, so the next migration breaks here rather
     # than half an hour into the build.
