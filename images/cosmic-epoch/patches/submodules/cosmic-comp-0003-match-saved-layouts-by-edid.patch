@@ -1,0 +1,366 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: samuel <samuel.verstraete@ontoforce.com>
+Date: Tue, 17 Nov 2026 09:00:04 +0100
+Subject: [PATCH] config: match saved output layouts by EDID, not just
+ connector name
+
+Saved layouts in outputs.ron are keyed by {connector, make, model}. Two
+monitors of the same model share make and model, so the connector is the
+only thing telling them apart -- and DP-MST connectors behind a dock are
+named in probe order (nvidia-drm: "Dynamic displays may be probed in
+non-deterministic order"). The same monitor comes back as DP-3 on one boot
+and DP-4 on the next, and the saved layout swaps the two monitors.
+
+Record the EDID vendor/product block (already read into EdidProduct and
+used for workspace placement) in OutputInfo. Look a layout up by exact key
+first, then by the same set of monitors on other connectors, moving each
+entry (and any mirroring target) to where its monitor is now. When saving,
+drop configs for the same monitors under other connector names so a stale
+one can't win as an exact match later.
+
+Configs saved without `edid`, and monitors with identical EDIDs, still
+match on the connector as before. The field is optional and skipped when
+absent; older readers (cosmic-greeter's pinned cosmic-comp-config) ignore it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ cosmic-comp-config/src/output/comp.rs | 279 ++++++++++++++++++++++++++
+ src/config/mod.rs                     |  10 +-
+ 2 files changed, 282 insertions(+), 7 deletions(-)
+
+diff --git a/cosmic-comp-config/src/output/comp.rs b/cosmic-comp-config/src/output/comp.rs
+index 1810b9d4..42aae560 100644
+--- a/cosmic-comp-config/src/output/comp.rs
++++ b/cosmic-comp-config/src/output/comp.rs
+@@ -73,6 +73,119 @@ pub struct OutputInfo {
+     pub connector: String,
+     pub make: String,
+     pub model: String,
++    /// Tells apart two monitors of the same model, which share `make` and `model`. The
++    /// connector can't: DP-MST outputs behind a dock are named in probe order, so the same
++    /// monitor comes back as DP-3 one time and DP-4 the next.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub edid: Option<crate::EdidProduct>,
++}
++
++impl OutputInfo {
++    /// Whether `self` and `other` are the same physical monitor.
++    ///
++    /// With EDID on both sides the connector doesn't matter. Without it (configs saved before
++    /// `edid` was recorded, or monitors without an EDID) only the connector can tell two
++    /// monitors of the same model apart, so it has to match as well.
++    pub fn same_monitor(&self, other: &OutputInfo) -> bool {
++        self.make == other.make
++            && self.model == other.model
++            && match (&self.edid, &other.edid) {
++                (Some(a), Some(b)) => a == b,
++                _ => self.connector == other.connector,
++            }
++    }
++}
++
++/// Pairs each saved output with the current output that is the same monitor: `saved[i]` is
++/// `current[result[i]]`. `None` if the two sets aren't the same monitors.
++///
++/// Same-connector pairs are taken first, so monitors that `same_monitor` can't tell apart
++/// (identical EDIDs) keep following their connectors.
++fn match_outputs(saved: &[OutputInfo], current: &[OutputInfo]) -> Option<Vec<usize>> {
++    if saved.len() != current.len() {
++        return None;
++    }
++    let mut assignment = vec![None; saved.len()];
++    let mut taken = vec![false; current.len()];
++    for same_connector in [true, false] {
++        for (i, s) in saved.iter().enumerate() {
++            if assignment[i].is_some() {
++                continue;
++            }
++            if let Some(j) = (0..current.len()).find(|&j| {
++                !taken[j]
++                    && s.same_monitor(&current[j])
++                    && (!same_connector || s.connector == current[j].connector)
++            }) {
++                assignment[i] = Some(j);
++                taken[j] = true;
++            }
++        }
++    }
++    assignment.into_iter().collect()
++}
++
++impl OutputsConfig {
++    /// The saved config for `infos`, one entry per element of `infos`, in the same order.
++    ///
++    /// Prefers an exact match. Failing that, it takes a config saved for the same monitors on
++    /// other connectors and moves each entry to wherever its monitor is now.
++    pub fn lookup(&self, infos: &[OutputInfo]) -> Option<Vec<OutputConfig>> {
++        if let Some(configs) = self.config.get(infos) {
++            return Some(configs.clone());
++        }
++
++        let (saved, configs, assignment) = self
++            .config
++            .iter()
++            .filter_map(|(saved, configs)| {
++                let assignment = match_outputs(saved, infos)?;
++                // A config that knew which monitor was which beats one that only knew connectors.
++                let rank = assignment
++                    .iter()
++                    .enumerate()
++                    .fold((0, 0), |(e, c), (i, &j)| {
++                        (
++                            e + (saved[i].edid.is_some() && infos[j].edid.is_some()) as usize,
++                            c + (saved[i].connector == infos[j].connector) as usize,
++                        )
++                    });
++                Some((rank, saved, configs, assignment))
++            })
++            // Ties broken by key so the pick doesn't depend on HashMap order.
++            .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(a.1)))
++            .map(|(_, saved, configs, assignment)| (saved, configs, assignment))?;
++
++        let mut result = vec![OutputConfig::default(); infos.len()];
++        for (i, &j) in assignment.iter().enumerate() {
++            let mut config = configs.get(i)?.clone();
++            if let OutputState::Mirroring(conn) = &mut config.enabled {
++                if let Some(k) = saved.iter().position(|s| &s.connector == conn) {
++                    *conn = infos[assignment[k]].connector.clone();
++                }
++            }
++            result[j] = config;
++        }
++        Some(result)
++    }
++
++    /// Saves `configs` for `infos` (sorted, as `lookup` expects).
++    ///
++    /// Configs saved for the same monitors on other connectors are dropped, otherwise a stale
++    /// one would win again as an exact match the next time the connector names come back
++    /// that way. Skipped when `infos` holds monitors that can't be told apart, since for those
++    /// the connector is the only identity there is.
++    pub fn insert(&mut self, infos: Vec<OutputInfo>, configs: Vec<OutputConfig>) {
++        let distinct = infos
++            .iter()
++            .enumerate()
++            .all(|(i, a)| infos[i + 1..].iter().all(|b| !a.same_monitor(b)));
++        if distinct {
++            self.config
++                .retain(|saved, _| *saved == infos || match_outputs(saved, &infos).is_none());
++        }
++        self.config.insert(infos, configs);
++    }
+ }
+ 
+ pub fn load_outputs(path: Option<impl AsRef<Path>>) -> OutputsConfig {
+@@ -135,3 +248,169 @@ pub enum TransformDef {
+     Flipped180,
+     Flipped270,
+ }
++
++#[cfg(test)]
++mod test {
++    use super::*;
++    use crate::EdidProduct;
++
++    fn edid(product: u16, serial: Option<u32>) -> Option<EdidProduct> {
++        Some(EdidProduct {
++            manufacturer: ['G', 'S', 'M'],
++            product,
++            serial,
++            manufacture_week: 9,
++            manufacture_year: 2017,
++            model_year: None,
++        })
++    }
++
++    fn lg(connector: &str, edid: Option<EdidProduct>) -> OutputInfo {
++        OutputInfo {
++            connector: connector.into(),
++            make: "LG Electronics".into(),
++            model: "LG ULTRAWIDE".into(),
++            edid,
++        }
++    }
++
++    fn at(x: u32) -> OutputConfig {
++        OutputConfig {
++            position: (x, 0),
++            ..Default::default()
++        }
++    }
++
++    fn positions(configs: &[OutputConfig]) -> Vec<u32> {
++        configs.iter().map(|c| c.position.0).collect()
++    }
++
++    fn empty() -> OutputsConfig {
++        OutputsConfig {
++            config: HashMap::new(),
++        }
++    }
++
++    #[test]
++    fn layout_follows_monitors_when_connectors_swap() {
++        let (a, b) = (edid(0x5ae2, Some(448831)), edid(0x76e4, Some(378016)));
++        let mut config = empty();
++        // A on the left, B on the right
++        config.insert(vec![lg("DP-3", a), lg("DP-4", b)], vec![at(0), at(3440)]);
++
++        // next boot the dock probes them the other way round
++        let swapped = [lg("DP-3", b), lg("DP-4", a)];
++        assert_eq!(positions(&config.lookup(&swapped).unwrap()), [3440, 0]);
++
++        // or on connectors that weren't there before
++        let renamed = [lg("DP-4", a), lg("DP-5", b)];
++        assert_eq!(positions(&config.lookup(&renamed).unwrap()), [0, 3440]);
++    }
++
++    #[test]
++    fn insert_drops_configs_for_the_same_monitors() {
++        let (a, b) = (edid(0x5ae2, Some(448831)), edid(0x76e4, Some(378016)));
++        let mut config = empty();
++        config.insert(vec![lg("DP-3", a), lg("DP-4", b)], vec![at(0), at(3440)]);
++
++        // connectors swapped, user moves B to the left
++        let swapped = vec![lg("DP-3", b), lg("DP-4", a)];
++        config.insert(swapped, vec![at(0), at(3440)]);
++        assert_eq!(config.config.len(), 1);
++
++        // the original connector order must get the new layout, not the stale exact match
++        let original = [lg("DP-3", a), lg("DP-4", b)];
++        assert_eq!(positions(&config.lookup(&original).unwrap()), [3440, 0]);
++    }
++
++    #[test]
++    fn legacy_configs_still_match_by_connector() {
++        let (a, b) = (edid(0x5ae2, Some(448831)), edid(0x76e4, Some(378016)));
++        let mut config = empty();
++        config.config.insert(
++            vec![lg("DP-3", None), lg("DP-4", None)],
++            vec![at(0), at(3440)],
++        );
++
++        let current = [lg("DP-3", b), lg("DP-4", a)];
++        assert_eq!(positions(&config.lookup(&current).unwrap()), [0, 3440]);
++        assert!(config.lookup(&[lg("DP-4", a), lg("DP-5", b)]).is_none());
++
++        // once saved with EDIDs, the legacy entry is superseded
++        config.insert(current.to_vec(), vec![at(0), at(3440)]);
++        assert_eq!(config.config.len(), 1);
++    }
++
++    #[test]
++    fn edid_config_beats_legacy_config() {
++        let (a, b) = (edid(0x5ae2, Some(448831)), edid(0x76e4, Some(378016)));
++        let mut config = empty();
++        config.config.insert(
++            vec![lg("DP-4", None), lg("DP-5", None)],
++            vec![at(0), at(3440)],
++        );
++        config.insert(vec![lg("DP-3", a), lg("DP-4", b)], vec![at(0), at(3440)]);
++
++        // the legacy entry matches these connectors exactly, but put B on the left
++        let current = [lg("DP-4", b), lg("DP-5", a)];
++        assert_eq!(positions(&config.lookup(&current).unwrap()), [3440, 0]);
++    }
++
++    #[test]
++    fn identical_monitors_follow_connectors() {
++        let twin = edid(0x5ae2, None);
++        let mut config = empty();
++        config.insert(
++            vec![lg("DP-3", twin), lg("DP-4", twin)],
++            vec![at(0), at(3440)],
++        );
++        config.insert(
++            vec![lg("DP-4", twin), lg("DP-5", twin)],
++            vec![at(3440), at(0)],
++        );
++        // nothing to tell them apart by, so both connector sets keep their own layout
++        assert_eq!(config.config.len(), 2);
++
++        let current = [lg("DP-3", twin), lg("DP-4", twin)];
++        assert_eq!(positions(&config.lookup(&current).unwrap()), [0, 3440]);
++    }
++
++    #[test]
++    fn mirroring_target_is_renamed() {
++        let (a, b) = (edid(0x5ae2, Some(448831)), edid(0x76e4, Some(378016)));
++        let mut config = empty();
++        let mut mirror = at(0);
++        mirror.enabled = OutputState::Mirroring("DP-3".into());
++        config.insert(vec![lg("DP-3", a), lg("DP-4", b)], vec![at(0), mirror]);
++
++        let swapped = [lg("DP-3", b), lg("DP-4", a)];
++        let configs = config.lookup(&swapped).unwrap();
++        assert_eq!(configs[0].enabled, OutputState::Mirroring("DP-4".into()));
++        assert_eq!(configs[1].enabled, OutputState::Enabled);
++    }
++
++    /// cosmic-greeter reads the user's outputs.ron with its own copy of this crate and deletes
++    /// the file if it fails to parse, so the new field must not break older readers.
++    #[test]
++    fn older_readers_ignore_edid() {
++        #[derive(Deserialize, PartialEq, Eq, Hash, Debug)]
++        struct OldInfo {
++            connector: String,
++            make: String,
++            model: String,
++        }
++        #[derive(Deserialize)]
++        struct OldConfig {
++            config: HashMap<Vec<OldInfo>, Vec<OutputConfig>>,
++        }
++
++        let mut config = empty();
++        config.insert(vec![lg("DP-3", edid(0x5ae2, Some(448831)))], vec![at(0)]);
++        let ron = ron::ser::to_string_pretty(&config, Default::default()).unwrap();
++        assert!(ron.contains("edid"));
++
++        let old: OldConfig = ron::from_str(&ron).unwrap();
++        let (infos, _) = old.config.into_iter().next().unwrap();
++        assert_eq!(infos[0].connector, "DP-3");
++    }
++}
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index be509e72..71c9b83f 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -444,8 +444,7 @@ impl Config {
+         if let Some(configs) = self
+             .dynamic_conf
+             .outputs()
+-            .config
+-            .get(&infos)
++            .lookup(&infos)
+             .filter(|configs| {
+                 if configs
+                     .iter()
+@@ -462,7 +461,6 @@ impl Config {
+                     true
+                 }
+             })
+-            .cloned()
+         {
+             let known_good_configs = outputs
+                 .iter()
+@@ -629,10 +627,7 @@ impl Config {
+             .collect::<Vec<(OutputInfo, OutputConfig)>>();
+         infos.sort_by(|(a, _), (b, _)| a.cmp(b));
+         let (infos, configs) = infos.into_iter().unzip();
+-        self.dynamic_conf
+-            .outputs_mut()
+-            .config
+-            .insert(infos, configs);
++        self.dynamic_conf.outputs_mut().insert(infos, configs);
+     }
+ 
+     pub fn xkb_config(&self) -> XkbConfig {
+@@ -1057,6 +1052,7 @@ impl From<Output> for CompOutputInfo {
+             connector: o.name(),
+             make: physical.make,
+             model: physical.model,
++            edid: o.edid().cloned(),
+         })
+     }
+ }

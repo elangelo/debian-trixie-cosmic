@@ -194,3 +194,40 @@ Both cosmic-comp patches also apply with `patch -p1 --fuzz=0`, in order, to the
 submodule commit pinned by epoch-1.11.0, 8cb1802caada438bb5cc7670dfabdaca5fad0502
 (0002's `src/backend/kms/mod.rs` hunks are still offset by six lines). None of the 17
 upstream commits since 1.10.0 touch `src/backend/kms`.
+
+### cosmic-comp-0003-match-saved-layouts-by-edid.patch
+
+Fixes the two WD19TB ultrawides at home swapping left/right. Both report the same EDID make
+and model ("LG Electronics", "LG ULTRAWIDE"). They differ only in the EDID vendor/product
+block: product 0x5ae2 serial 448831 vs product 0x76e4 serial 378016.
+
+nvidia-drm exposes the dock's DP-MST monitors as dynamic displays and names them in probe
+order, so the same monitor is `DP-3` on one boot and `DP-4` (or `DP-5`) on the next. The
+kernel says as much: "Dynamic displays may be probed in non-deterministic order." cosmic-comp
+keys saved layouts in `~/.local/state/cosmic-comp/outputs.ron` by `{connector, make, model}`.
+With two identical make/model strings the connector is the only distinguishing field, so
+"DP-3 at x=0" lands on whichever monitor was probed first. The file had separate entries for
+DP-3+DP-4, DP-4+DP-5 and DP-3+DP-5, each with its own left/right.
+
+The patch adds the `EdidProduct` cosmic-comp already reads (and already uses to put
+workspaces back on the right output) to `OutputInfo` as an optional `edid` field.
+`OutputsConfig::lookup` takes an exact match first. Failing that, it takes the config saved
+for the same monitors and moves each entry to the connector its monitor is on now; mirroring
+targets are renamed the same way. `OutputsConfig::insert` drops configs for the same
+monitors under other connector names, so a stale one can't win as an exact match later.
+
+Monitors that EDID can't tell apart (identical vendor/product/serial) and configs saved
+before this patch (no `edid`) fall back to matching on the connector, as before. So the first
+login after upgrading behaves exactly like today. If that boot happens to probe the monitors
+the "wrong" way round, fix the layout once and it sticks from then on.
+
+The new field is skipped when absent, and older readers ignore it. That matters because
+cosmic-greeter reads the user's `outputs.ron` with its own pinned copy of `cosmic-comp-config`,
+and `load_outputs` deletes the file when it fails to parse. A unit test deserializes the new
+format with the old three-field struct.
+
+Verified with `cargo test --features output` in `cosmic-comp-config` (7 new tests: swap,
+rename to new connectors, stale-entry removal, legacy configs, EDID config beating a legacy
+one, identical twins, mirroring) and `cargo check` of cosmic-comp, both in the `toolchain`
+stage image, against the submodule commit pinned by epoch-1.11.0,
+8cb1802caada438bb5cc7670dfabdaca5fad0502, on top of 0001 and 0002.
